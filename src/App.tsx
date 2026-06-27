@@ -174,7 +174,7 @@ function App() {
     if (allowed.length > 0 && !allowed.includes(type)) setType(allowed[0]);
   }, [targetAssetId, type, assets, categories, editingRecordId]);
 
-  // --- GRAPH ADATOK ELŐKÉSZÍTÉSE ---
+  // --- GRAFIKON ADATOK ELŐKÉSZÍTÉSE ---
   const chartData = useMemo(() => {
     const dataMap: { [key: string]: any } = {};
     const fRec = records.filter((r: any) => selectedAssetId === 'all' || String(r.AssetId) === String(selectedAssetId));
@@ -493,22 +493,25 @@ function App() {
         
         {/* --- HEADER --- */}
         <header className="app-header">
-          <div className="brand-logo">
-            <span className="logo-icon">⚡</span>
-            <h1>Rezsiapp <span className="version-tag">2.0</span></h1>
-          </div>
-          {user && (
-            <div className="user-profile-zone">
-              {!isReadOnly && (
-                <>
-                  <button className="nav-btn" onClick={() => { setShowCategoryManager(true); setShowAssetManager(false); }}>⚙️ Kategóriák</button>
-                  <button className="nav-btn nav-btn-primary" onClick={() => { setShowAssetManager(true); setShowCategoryManager(false); }}>🏠 Eszközök</button>
-                </>
-              )}
-              <div className="user-meta" title={user.email}>
-                <img src={user.picture} alt="Avatar" className="user-avatar" />
+          <div className="header-top-row">
+            <div className="brand-logo">
+              <span className="logo-icon">⚡</span>
+              <h1>Rezsiapp <span className="version-tag">2.0</span></h1>
+            </div>
+            {user && (
+              <div className="user-profile-zone">
+                <div className="user-meta" title={user.email}>
+                  <img src={user.picture} alt="Avatar" className="user-avatar" />
+                </div>
+                <button className="btn-logout-icon" onClick={forceLogout} title="Kilépés">🚪</button>
               </div>
-              <button className="btn-logout-icon" onClick={forceLogout} title="Kilépés">🚪</button>
+            )}
+          </div>
+          
+          {user && !isReadOnly && (
+            <div className="header-actions-row">
+              <button className="nav-btn" onClick={() => { setShowCategoryManager(true); setShowAssetManager(false); }}>⚙️ Kategóriák</button>
+              <button className="nav-btn nav-btn-primary" onClick={() => { setShowAssetManager(true); setShowCategoryManager(false); }}>🏠 Eszközök</button>
             </div>
           )}
         </header>
@@ -522,7 +525,7 @@ function App() {
                 <button className="close-modal" onClick={() => setShowCategoryManager(false)}>×</button>
               </div>
               <div className="modal-form">
-                <input placeholder="Ikon (pl. ⚡)" value={newCategory.icon} onChange={(e) => setNewCategory({...newCategory, icon: e.target.value})} style={{width: '60px'}}/>
+                <input placeholder="Ikon (pl. ⚡)" value={newCategory.icon} onChange={(e) => setNewCategory({...newCategory, icon: e.target.value})} style={{width: '70px'}}/>
                 <input placeholder="Kategória neve" value={newCategory.name} onChange={(e) => setNewCategory({...newCategory, name: e.target.value})} />
                 <select value={newCategory.type} onChange={(e) => setNewCategory({...newCategory, type: e.target.value})}>
                   <option value="both">📟 Óraállás + 💰 Számla (Kiadás)</option>
@@ -597,10 +600,8 @@ function App() {
         {user ? (
           <div className="dashboard-grid">
             
-            {/* BAL OLDAL: VEZÉRLŐK, ADATBEVITEL */}
+            {/* SIDESBAR VEZÉRLŐK */}
             <aside className="dashboard-sidebar">
-              
-              {/* Nézetválasztó és Megosztás */}
               <div className="dashboard-card compact-card">
                 <div className="form-group">
                   <label>Eszköz kiválasztása</label>
@@ -627,7 +628,7 @@ function App() {
                 )}
               </div>
 
-              {/* Új adat hozzáadása */}
+              {/* Új adat rögzítése */}
               {!isReadOnly && (
                 <div className="dashboard-card">
                   <h3 className="card-title">Új Tranzakció / Érték</h3>
@@ -640,7 +641,7 @@ function App() {
 
                   <div className="vertical-form">
                     <select value={targetAssetId} onChange={(e) => setTargetAssetId(e.target.value)}>
-                      <option value="">Eszköz...</option>
+                      <option value="">Válassz eszközt...</option>
                       {assets.map((a: any) => (<option key={a.Id} value={a.Id}>{a.FriendlyName}</option>))}
                     </select>
                     
@@ -661,9 +662,9 @@ function App() {
                 </div>
               )}
 
-              {/* Megosztási beállítások kártya */}
+              {/* Családi megosztás */}
               {!isReadOnly && (
-                <div className="dashboard-card compact-card text-muted">
+                <div className="dashboard-card compact-card">
                   <h4 className="sub-title">Hozzáférés megosztása</h4>
                   <div className="flex-input-group">
                     <input type="email" placeholder="partner@email.com" value={shareEmail} onChange={(e) => setShareEmail(e.target.value)} />
@@ -674,7 +675,7 @@ function App() {
                       {myShares.map(s => (
                         <div key={s.id} className="share-mini-item">
                           <span>{s.shared_with_email}</span>
-                          <button onClick={() => revokeShare(s.id)}>visszavonás</button>
+                          <button onClick={() => revokeShare(s.id)}>törlés</button>
                         </div>
                       ))}
                     </div>
@@ -683,10 +684,10 @@ function App() {
               )}
             </aside>
 
-            {/* JOBB OLDAL: GRAFIKONOK ÉS TÖRTÉNET */}
+            {/* MAIN TARTALOM (Grafikon & Listák) */}
             <main className="dashboard-main">
               
-              {/* Szűrősáv (Felül) */}
+              {/* Eszköztár szűrőkkel */}
               <div className="toolbar-card">
                 <div className="category-scroll-chips">
                   {categories.map(c => (
@@ -701,50 +702,54 @@ function App() {
                 </div>
 
                 <div className="display-toggles">
-                  <div className="toggle-group">
-                    <button className={displayMode === 'usage' ? 'active' : ''} disabled={categories.find(c => c.Name === filter)?.Type === 'invoice_only' || categories.find(c => c.Name === filter)?.Type === 'income' || filter === 'Összes' || filter === 'Összes kiadás'} onClick={() => setDisplayMode('usage')}>Fogyasztás</button>
-                    <button className={displayMode === 'cost' ? 'active' : ''} onClick={() => setDisplayMode('cost')}>Költség</button>
-                  </div>
-
-                  <div className="toggle-group">
-                    <button className={viewMode === 'monthly' ? 'active' : ''} onClick={() => setViewMode('monthly')}>Havi</button>
-                    <button className={viewMode === 'annual' ? 'active' : ''} onClick={() => setViewMode('annual')}>Éves</button>
-                  </div>
-
-                  <select className="styled-range-select" value={chartRange} onChange={(e) => { const val = e.target.value; setChartRange(val === 'all' || val === 'custom' ? val : parseInt(val)); }}>
-                    {viewMode === 'monthly' && <option value={6}>Utolsó 6 hó</option>}
-                    {viewMode === 'monthly' && <option value={12}>Utolsó 12 hó</option>}
-                    {viewMode === 'monthly' && <option value={24}>Utolsó 24 hó</option>}
-                    <option value="all">Minden adat</option>
-                    <option value="custom">Egyedi...</option>
-                  </select>
-
-                  {chartRange === 'custom' && (
-                    <div className="custom-range-inputs">
-                      <input type="month" value={customStartDate} onChange={(e) => setCustomStartDate(e.target.value)} />
-                      <span>-</span>
-                      <input type="month" value={customEndDate} onChange={(e) => setCustomEndDate(e.target.value)} />
+                  <div className="toggle-group-row">
+                    <div className="toggle-group">
+                      <button className={displayMode === 'usage' ? 'active' : ''} disabled={categories.find(c => c.Name === filter)?.Type === 'invoice_only' || categories.find(c => c.Name === filter)?.Type === 'income' || filter === 'Összes' || filter === 'Összes kiadás'} onClick={() => setDisplayMode('usage')}>Fogyasztás</button>
+                      <button className={displayMode === 'cost' ? 'active' : ''} onClick={() => setDisplayMode('cost')}>Költség</button>
                     </div>
-                  )}
+
+                    <div className="toggle-group">
+                      <button className={viewMode === 'monthly' ? 'active' : ''} onClick={() => setViewMode('monthly')}>Havi</button>
+                      <button className={viewMode === 'annual' ? 'active' : ''} onClick={() => setViewMode('annual')}>Éves</button>
+                    </div>
+                  </div>
+
+                  <div className="toggle-group-row width-100">
+                    <select className="styled-range-select" value={chartRange} onChange={(e) => { const val = e.target.value; setChartRange(val === 'all' || val === 'custom' ? val : parseInt(val)); }}>
+                      {viewMode === 'monthly' && <option value={6}>Utolsó 6 hónap</option>}
+                      {viewMode === 'monthly' && <option value={12}>Utolsó 12 hónap</option>}
+                      {viewMode === 'monthly' && <option value={24}>Utolsó 24 hónap</option>}
+                      <option value="all">Minden adat</option>
+                      <option value="custom">Egyedi...</option>
+                    </select>
+
+                    {chartRange === 'custom' && (
+                      <div className="custom-range-inputs">
+                        <input type="month" value={customStartDate} onChange={(e) => setCustomStartDate(e.target.value)} />
+                        <span>-</span>
+                        <input type="month" value={customEndDate} onChange={(e) => setCustomEndDate(e.target.value)} />
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
 
               {/* GRAFIKON KÁRTYA */}
               <div className="dashboard-card chart-container-card">
                 {chartData.length > 0 ? (
-                  <ResponsiveContainer width="100%" height={320}>
-                    <BarChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                  <ResponsiveContainer width="100%" height={280}>
+                    <BarChart data={chartData} margin={{ top: 10, right: 5, left: -25, bottom: 0 }}>
                       <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#334155" />
                       <XAxis dataKey="label" fontSize={11} stroke="#94a3b8" tickLine={false} />
                       <YAxis fontSize={11} stroke="#94a3b8" tickLine={false} axisLine={false} />
                       <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(255, 255, 255, 0.03)' }} />
-                      <Legend iconType="circle" wrapperStyle={{ fontSize: '12px', paddingTop: '10px' }} />
+                      <Legend iconType="circle" wrapperStyle={{ fontSize: '11px', paddingTop: '12px' }} />
                       
                       {(selectedAssetId === 'all' ? assets : assets.filter(a => String(a.Id) === String(selectedAssetId))).map((asset, idx) => {
                         const color = selectedAssetId === 'all' ? ASSET_COLORS[idx % ASSET_COLORS.length] : getColor();
                         return (
                           <React.Fragment key={asset.Id}>
-                            <Bar dataKey={asset.FriendlyName} stackId="expense" fill={color} radius={[4, 4, 0, 0]} />
+                            <Bar dataKey={asset.FriendlyName} stackId="expense" fill={color} radius={[3, 3, 0, 0]} />
                             <Bar 
                               dataKey={`${asset.FriendlyName}_income`} 
                               name={`${asset.FriendlyName} (Bevétel)`} 
@@ -759,7 +764,7 @@ function App() {
                     </BarChart>
                   </ResponsiveContainer>
                 ) : (
-                  <div className="empty-state-notice">Nincs megjeleníthető adat a kiválasztott időszakban és szűrőkkel.</div>
+                  <div className="empty-state-notice">Nincs adat a választott időszakban.</div>
                 )}
               </div>
 
@@ -778,7 +783,7 @@ function App() {
                           <div className={`icon-indicator ${item.lType}`}>{item.lType === 'meter' ? '📟' : '💰'}</div>
                           <div className="feed-meta-details">
                             <span className="feed-title">{getIcon(item.Type)} {item.Type}</span>
-                            <span className="feed-sub">{asset ? `${asset.FriendlyName}` : 'Nincs társítva'} • {String(item.d).substring(0, 10)}</span>
+                            <span className="feed-sub">{asset ? `${asset.FriendlyName}` : 'Ismeretlen'} • {String(item.d).substring(0, 10)}</span>
                           </div>
                         </div>
                         <div className="feed-right">
@@ -788,7 +793,7 @@ function App() {
                           {!isReadOnly && (
                             <div className="feed-actions-hover">
                               <button className="btn-circle-edit" onClick={() => handleEditRecord(item)}>✏️</button>
-                              <button className="btn-circle-delete" onClick={async () => { if(window.confirm("Biztosan törlöd ezt a tételt?")) { await fetch(`${BACKEND_URL}/api/${item.lType === 'meter' ? 'records' : 'invoices'}/${item.Id || item.id}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${user.token}` } }); fetchAll(user.token); } }}>❌</button>
+                              <button className="btn-circle-delete" onClick={async () => { if(window.confirm("Biztosan törlöd?")) { await fetch(`${BACKEND_URL}/api/${item.lType === 'meter' ? 'records' : 'invoices'}/${item.Id || item.id}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${user.token}` } }); fetchAll(user.token); } }}>❌</button>
                             </div>
                           )}
                         </div>
@@ -806,35 +811,27 @@ function App() {
           <div className="auth-wrapper-centered">
             <div className="auth-hero-card">
               <h1 className="auth-title">Üdvözöl a <span className="gradient-text">Rezsiapp 2.0</span></h1>
-              <p className="auth-subtitle">A legkényelmesebb, modern platform a háztartási kiadások, közüzemi mérőórák és az autód költségeinek intelligens nyomon követésére.</p>
+              <p className="auth-subtitle">A háztartási rezsiköltségek és járműkiadások okos, letisztult kezelőfelülete.</p>
               
               <div className="auth-features-list">
                 <div className="feature-row">
                   <div className="f-icon">📊</div>
                   <div>
-                    <h4>Vizuális Statisztika</h4>
-                    <p>Gyönyörű, egymásra halmozott grafikonok a fogyasztásodról és költségstruktúrádról.</p>
+                    <h4>Vizuális Statisztikák</h4>
+                    <p>Egyszerűen átlátható grafikonok havi és éves bontásokban.</p>
                   </div>
                 </div>
                 <div className="feature-row">
                   <div className="f-icon">🚗</div>
                   <div>
-                    <h4>Multi-Eszköz Kezelés</h4>
-                    <p>Különítsd el ingatlanjaid rezsijét, autód tankolásait vagy családtagjaid egyedi kiadásait.</p>
-                  </div>
-                </div>
-                <div className="feature-row">
-                  <div className="f-icon">🤝</div>
-                  <div>
-                    <h4>Biztonságos Megosztás</h4>
-                    <p>Oszd meg fiókodat partnereiddel vagy lakótársaiddal valós időben, biztonságos Google Auth alapokon.</p>
+                    <h4>Több különálló eszköz</h4>
+                    <p>Kezeld külön lakásod mérőóráit és az autók üzemanyag-költségeit.</p>
                   </div>
                 </div>
               </div>
 
               <div className="auth-action-box">
-                <h3>Kezdjük el!</h3>
-                <p>Nincs szükség bonyolult regisztrációra, lépj be azonnal Google fiókoddal.</p>
+                <p>Belépéshez használd a meglévő biztonságos Google fiókodat.</p>
                 <div className="google-signin-btn-container">
                   <GoogleLogin onSuccess={(res) => handleLoginSuccess(res.credential!)} />
                 </div>
@@ -843,7 +840,7 @@ function App() {
           </div>
         )}
 
-        {/* --- GLOBAL APP EMBEDDED STYLES (A modern UI motorja) --- */}
+        {/* --- PRÉMIUM MOBIL-FIRST STYLING MOTOR --- */}
         <style>{`
           :root {
             --bg-main: #0f172a;
@@ -861,72 +858,60 @@ function App() {
           body {
             background-color: var(--bg-main);
             color: var(--text-main);
-            font-family: 'Inter', system-ui, -apple-system, sans-serif;
-            margin: 0;
-            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            margin: 0; padding: 0;
+            font-size: 16px;
+            -webkit-font-smoothing: antialiased;
           }
 
           .app-container {
             max-width: 1400px;
             margin: 0 auto;
-            padding: 20px;
+            padding: 12px;
+            box-sizing: border-box;
           }
 
-          /* HEADER STYLING */
+          /* --- FEJLÉC (RESPONZÍV) --- */
           .app-header {
+            background: var(--bg-card);
+            border-radius: 14px;
+            padding: 14px 16px;
+            margin-bottom: 16px;
+            border: 1px solid #2e3a4e;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+          }
+
+          .header-top-row {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 15px 25px;
-            background: var(--bg-card);
-            border-radius: 16px;
-            margin-bottom: 25px;
-            border: 1px solid #2e3a4e;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.2);
-          }
-
-          .brand-logo {
-            display: flex;
-            align-items: center;
-            gap: 10px;
           }
 
           .brand-logo h1 {
-            font-size: 1.3rem;
-            margin: 0;
-            font-weight: 700;
-            letter-spacing: -0.5px;
+            font-size: 1.25rem; margin: 0; font-weight: 700;
           }
 
-          .version-tag {
-            color: var(--accent);
+          .header-actions-row {
+            display: flex;
+            gap: 8px;
+          }
+
+          .header-actions-row .nav-btn {
+            flex: 1;
+            text-align: center;
+            padding: 10px;
             font-size: 0.9rem;
           }
 
-          .logo-icon {
-            font-size: 1.5rem;
-          }
-
-          .user-profile-zone {
-            display: flex;
-            align-items: center;
-            gap: 15px;
-          }
-
           .nav-btn {
-            background: transparent;
-            border: 1px solid var(--bg-hover);
+            background: #27354a;
+            border: 1px solid #3d4f68;
             color: var(--text-main);
-            padding: 8px 16px;
             border-radius: 10px;
             cursor: pointer;
-            font-weight: 500;
-            font-size: 0.85rem;
-            transition: all 0.2s;
-          }
-
-          .nav-btn:hover {
-            background: var(--bg-hover);
+            font-weight: 600;
           }
 
           .nav-btn-primary {
@@ -934,403 +919,232 @@ function App() {
             border-color: var(--accent);
           }
 
-          .nav-btn-primary:hover {
-            background: var(--accent-hover);
+          .user-profile-zone {
+            display: flex;
+            align-items: center;
+            gap: 12px;
           }
 
           .user-avatar {
-            width: 36px;
-            height: 36px;
-            border-radius: 50%;
-            border: 2px solid var(--accent);
+            width: 38px; height: 38px; border-radius: 50%; border: 2px solid var(--accent);
           }
 
           .btn-logout-icon {
-            background: transparent;
-            border: none;
-            cursor: pointer;
-            font-size: 1.2rem;
-            padding: 5px;
+            background: transparent; border: none; cursor: pointer; font-size: 1.3rem; padding: 4px;
           }
 
-          /* GRID LAYOUT */
+          /* --- RÁCS ELRENDEZÉS --- */
           .dashboard-grid {
             display: grid;
-            grid-template-columns: 320px 1fr;
-            gap: 25px;
+            grid-template-columns: 1fr;
+            gap: 16px;
           }
 
-          @media (max-width: 968px) {
+          @media (min-width: 992px) {
             .dashboard-grid {
-              grid-template-columns: 1fr;
+              grid-template-columns: 340px 1fr;
+              gap: 24px;
             }
           }
 
-          /* CARDS */
+          /* --- KÁRTYÁK --- */
           .dashboard-card {
             background: var(--bg-card);
-            border-radius: 16px;
-            padding: 20px;
+            border-radius: 14px;
+            padding: 16px;
             border: 1px solid #2e3a4e;
-            margin-bottom: 20px;
-          }
-
-          .compact-card {
-            padding: 15px;
           }
 
           .card-title {
-            margin-top: 0;
-            margin-bottom: 15px;
-            font-size: 1.05rem;
-            font-weight: 600;
-            color: var(--text-main);
+            margin-top: 0; margin-bottom: 14px; font-size: 1.05rem; font-weight: 600;
           }
 
-          /* FORMS & INPUTS */
+          .sub-title {
+            margin-top: 0; margin-bottom: 8px; font-size: 0.9rem; color: var(--text-muted); text-transform: uppercase;
+          }
+
+          /* --- IOS-BIZTOS BEVITELI MEZŐK ÉS FORMOK --- */
           .form-group {
-            display: flex;
-            flex-direction: column;
-            gap: 6px;
+            display: flex; flex-direction: column; gap: 6px;
           }
 
           .form-group label {
-            font-size: 0.75rem;
-            color: var(--text-muted);
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
+            font-size: 0.8rem; color: var(--text-muted); font-weight: 500;
           }
 
-          .styled-select, .vertical-form select, .vertical-form input {
+          /* Nagyon fontos: minimum 16px font-size, hogy a mobil Safari ne kicsinyítse le az oldalt! */
+          .styled-select, .vertical-form select, .vertical-form input, .flex-input-group input {
             width: 100%;
-            padding: 10px 12px;
+            padding: 12px;
             background: var(--bg-main);
             border: 1px solid #334155;
             border-radius: 10px;
             color: var(--text-main);
-            outline: none;
-            font-size: 0.9rem;
+            font-size: 16px !important;
             box-sizing: border-box;
+            outline: none;
+            height: 48px; /* Tökéletes touch magasság */
           }
 
           .vertical-form {
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
-            margin-top: 15px;
+            display: flex; flex-direction: column; gap: 12px; margin-top: 14px;
           }
 
           .tab-switcher {
-            display: flex;
-            background: var(--bg-main);
-            padding: 4px;
-            border-radius: 10px;
-            gap: 4px;
+            display: flex; background: var(--bg-main); padding: 4px; border-radius: 10px; gap: 4px;
           }
 
           .tab-btn {
-            flex: 1;
-            background: transparent;
-            border: none;
-            color: var(--text-muted);
-            padding: 8px;
-            border-radius: 8px;
-            cursor: pointer;
-            font-size: 0.8rem;
-            font-weight: 500;
+            flex: 1; background: transparent; border: none; color: var(--text-muted);
+            padding: 10px; border-radius: 8px; cursor: pointer; font-size: 0.9rem; font-weight: 600;
+            height: 40px;
           }
 
           .tab-btn.active {
-            background: var(--bg-card);
-            color: var(--text-main);
-            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+            background: var(--bg-card); color: var(--text-main); box-shadow: 0 2px 6px rgba(0,0,0,0.2);
           }
 
           .btn-submit-form {
-            background: var(--emerald);
-            color: white;
-            border: none;
-            padding: 11px;
-            border-radius: 10px;
-            cursor: pointer;
-            font-weight: 600;
-            margin-top: 5px;
+            background: var(--emerald); color: white; border: none; padding: 12px;
+            border-radius: 10px; cursor: pointer; font-weight: 700; font-size: 1rem; height: 48px;
           }
 
-          .btn-submit-form:disabled {
-            opacity: 0.4;
-            cursor: not-allowed;
+          .btn-submit-form:disabled { opacity: 0.35; }
+
+          .flex-input-group {
+            display: flex; gap: 8px;
+          }
+          .btn-add-plus {
+            background: var(--accent); border: none; color: white; width: 48px; height: 48px;
+            border-radius: 10px; font-size: 1.2rem; cursor: pointer; font-weight: bold;
           }
 
-          /* TOOLBAR & CHIPS */
+          /* --- HORIZONTÁLIS SWIPE-OLHATÓ SZŰRŐ CHIPEK --- */
           .toolbar-card {
-            background: var(--bg-card);
-            border-radius: 16px;
-            padding: 15px;
-            border: 1px solid #2e3a4e;
-            margin-bottom: 20px;
-            display: flex;
-            flex-direction: column;
-            gap: 15px;
+            background: var(--bg-card); border-radius: 14px; padding: 14px;
+            border: 1px solid #2e3a4e; display: flex; flex-direction: column; gap: 14px;
           }
 
           .category-scroll-chips {
-            display: flex;
-            gap: 8px;
-            overflow-x: auto;
-            padding-bottom: 5px;
+            display: flex; gap: 8px; overflow-x: auto; padding-bottom: 6px;
+            -webkit-overflow-scrolling: touch;
           }
+          /* Rejtsük el az asztali görgetősávot de maradjon görgethető */
+          .category-scroll-chips::-webkit-scrollbar { display: none; }
 
           .chip-btn {
-            background: var(--bg-main);
-            border: 1px solid #334155;
-            color: var(--text-main);
-            padding: 6px 14px;
-            border-radius: 20px;
-            white-space: nowrap;
-            cursor: pointer;
-            font-size: 0.8rem;
-            transition: all 0.2s;
+            background: var(--bg-main); border: 1px solid #334155; color: var(--text-main);
+            padding: 10px 16px; border-radius: 24px; white-space: nowrap; cursor: pointer;
+            font-size: 0.85rem; font-weight: 500; height: 40px; display: inline-flex; align-items: center;
           }
 
-          .chip-btn.active {
-            border-color: transparent;
-            color: white;
-          }
+          .chip-btn.active { border-color: transparent; color: white; font-weight: 600; }
 
+          /* --- VEZÉRLŐ GOMB CSOPORTOK --- */
           .display-toggles {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 15px;
-            align-items: center;
+            display: flex; flex-direction: column; gap: 10px;
+          }
+
+          .toggle-group-row {
+            display: flex; gap: 8px; width: 100%;
           }
 
           .toggle-group {
-            display: flex;
-            background: var(--bg-main);
-            padding: 3px;
-            border-radius: 20px;
-            border: 1px solid #334155;
+            flex: 1; display: flex; background: var(--bg-main); padding: 4px; border-radius: 24px; border: 1px solid #334155;
           }
 
           .toggle-group button {
-            background: transparent;
-            border: none;
-            color: var(--text-muted);
-            padding: 5px 14px;
-            border-radius: 20px;
-            font-size: 0.75rem;
-            cursor: pointer;
+            flex: 1; background: transparent; border: none; color: var(--text-muted);
+            padding: 8px; border-radius: 20px; font-size: 0.8rem; font-weight: 600; cursor: pointer;
+            height: 34px;
           }
 
-          .toggle-group button.active {
-            background: var(--accent);
-            color: white;
-          }
+          .toggle-group button.active { background: var(--accent); color: white; }
 
           .styled-range-select {
-            background: var(--bg-main);
-            color: var(--text-muted);
-            border: 1px solid #334155;
-            padding: 5px 12px;
-            border-radius: 20px;
-            font-size: 0.75rem;
-            outline: none;
+            width: 100%; background: var(--bg-main); color: var(--text-main); border: 1px solid #334155;
+            padding: 10px; border-radius: 24px; font-size: 0.85rem; outline: none; height: 42px; text-align: center;
           }
 
-          /* RECORDS FEED */
-          .records-feed {
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-          }
+          /* --- TRANZAKCIÓS LISTA --- */
+          .list-history-wrapper { margin-top: 8px; }
+          .section-title-flat { font-size: 1.05rem; margin-bottom: 12px; font-weight: 600; color: var(--text-muted); }
+
+          .records-feed { display: flex; flex-direction: column; gap: 8px; }
 
           .feed-item-card {
-            background: var(--bg-card);
-            border: 1px solid #2e3a4e;
-            border-radius: 12px;
-            padding: 12px 16px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            transition: transform 0.2s, background 0.2s;
+            background: var(--bg-card); border: 1px solid #2e3a4e; border-radius: 12px;
+            padding: 12px 14px; display: flex; justify-content: space-between; align-items: center;
           }
 
-          .feed-item-card:hover {
-            background: #243147;
-            transform: translateY(-1px);
-          }
-
-          .feed-left {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-          }
-
+          .feed-left { display: flex; align-items: center; gap: 10px; }
+          
           .icon-indicator {
-            width: 32px;
-            height: 32px;
-            border-radius: 8px;
-            background: var(--bg-main);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 0.95rem;
+            width: 36px; height: 36px; border-radius: 10px; background: var(--bg-main);
+            display: flex; align-items: center; justify-content: center; font-size: 1rem;
           }
 
-          .feed-meta-details {
-            display: flex;
-            flex-direction: column;
+          .feed-meta-details { display: flex; flex-direction: column; }
+          .feed-title { font-weight: 600; font-size: 0.95rem; }
+          .feed-sub { font-size: 0.8rem; color: var(--text-muted); margin-top: 1px; }
+
+          .feed-right { display: flex; align-items: center; gap: 10px; }
+          .feed-value-tag { font-weight: 700; font-size: 0.95rem; }
+          .income-green { color: var(--emerald); }
+
+          /* Elrejtett natív hover gombok helyett mobilon mindig elérhető pici gombok */
+          .feed-actions-hover { display: flex; gap: 4px; }
+          .btn-circle-edit, .btn-circle-delete {
+            background: var(--bg-main); border: 1px solid #334155; border-radius: 8px;
+            width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;
+            cursor: pointer; font-size: 0.85rem;
           }
 
-          .feed-title {
-            font-weight: 600;
-            font-size: 0.9rem;
-          }
-
-          .feed-sub {
-            font-size: 0.75rem;
-            color: var(--text-muted);
-            margin-top: 2px;
-          }
-
-          .feed-value-tag {
-            font-weight: 700;
-            font-size: 0.95rem;
-          }
-
-          .income-green {
-            color: var(--emerald);
-          }
-
-          /* RECHARTS MODERNISED TOOLTIP */
+          /* --- RECHARTS MODERNEBB TOOLTIP --- */
           .custom-tooltip-box {
-            background: #1e293b;
-            padding: 12px;
-            border: 1px solid #334155;
-            border-radius: 8px;
-            color: #f8fafc;
-            box-shadow: 0 10px 25px rgba(0,0,0,0.4);
-            min-width: 200px;
+            background: #1e293b; padding: 12px; border: 1px solid #334155; border-radius: 8px;
+            color: #f8fafc; box-shadow: 0 10px 25px rgba(0,0,0,0.5); font-size: 13px;
           }
+          .tooltip-title { margin: 0 0 6px 0; font-weight: bold; border-bottom: 1px solid #334155; padding-bottom: 4px; }
+          .tooltip-row { display: flex; justify-content: space-between; gap: 16px; margin-bottom: 3px; }
 
-          .tooltip-title {
-            margin: 0 0 8px 0;
-            font-weight: bold;
-            border-bottom: 1px solid #334155;
-            padding-bottom: 6px;
-          }
-
-          .tooltip-row {
-            display: flex;
-            justify-content: space-between;
-            gap: 20px;
-            font-size: 0.8rem;
-            margin-bottom: 4px;
-          }
-
-          .tooltip-total {
-            display: flex;
-            justify-content: space-between;
-            font-weight: bold;
-            border-top: 1px solid #334155;
-            margin-top: 6px;
-            padding-top: 6px;
-          }
-
-          /* MODAL WINDOWS */
+          /* --- MODÁLIS ABLAKOK --- */
           .modal-backdrop {
-            position: fixed;
-            top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(15, 23, 42, 0.8);
-            backdrop-filter: blur(4px);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            z-index: 1000;
+            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(15, 23, 42, 0.85); backdrop-filter: blur(5px);
+            display: flex; align-items: center; justify-content: center; z-index: 2000; padding: 10px;
           }
 
           .modal-content {
-            background: var(--bg-card);
-            border: 1px solid #334155;
-            border-radius: 20px;
-            padding: 25px;
-            width: 100%;
-            max-width: 500px;
-            box-shadow: 0 20px 40px rgba(0,0,0,0.4);
+            background: var(--bg-card); border: 1px solid #334155; border-radius: 16px;
+            padding: 20px; width: 100%; max-width: 460px; box-shadow: 0 20px 40px rgba(0,0,0,0.5);
+            max-height: 90vh; overflow-y: auto;
           }
 
-          .modal-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 20px;
+          .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+          .close-modal { background: transparent; border: none; color: var(--text-muted); font-size: 1.6rem; cursor: pointer; }
+
+          .modal-form { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; }
+          .btn-save-action { background: var(--accent); color: white; border: none; padding: 12px; border-radius: 10px; font-weight: 600; font-size: 16px; cursor: pointer; }
+
+          .list-item-row {
+            display: flex; justify-content: space-between; align-items: center;
+            background: var(--bg-main); padding: 10px 12px; border-radius: 10px; margin-bottom: 6px; font-size: 0.95rem;
           }
 
-          .modal-header h3 { margin: 0; font-size: 1.15rem; }
-
-          .close-modal {
-            background: transparent;
-            border: none;
-            color: var(--text-muted);
-            font-size: 1.5rem;
-            cursor: pointer;
-          }
-
-          /* AUTH HERO */
-          .auth-wrapper-centered {
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 75vh;
-          }
-
-          .auth-hero-card {
-            background: var(--bg-card);
-            border: 1px solid #2e3a4e;
-            max-width: 550px;
-            padding: 40px;
-            border-radius: 24px;
-            text-align: center;
-            box-shadow: 0 15px 35px rgba(0,0,0,0.3);
-          }
-
-          .gradient-text {
-            background: linear-gradient(135deg, #818cf8, #34d399);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-          }
-
-          .auth-title { font-size: 1.8rem; margin-bottom: 12px; }
-          .auth-subtitle { color: var(--text-muted); font-size: 0.9rem; line-height: 1.5; }
-
-          .auth-features-list {
-            text-align: left;
-            margin: 30px 0;
-            display: flex;
-            flex-direction: column;
-            gap: 15px;
-          }
-
-          .feature-row { display: flex; gap: 15px; align-items: flex-start; }
-          .f-icon { font-size: 1.4rem; background: var(--bg-main); padding: 8px; border-radius: 10px; }
-          .feature-row h4 { margin: 0; font-size: 0.95rem; }
-          .feature-row p { margin: 2px 0 0 0; font-size: 0.8rem; color: var(--text-muted); }
-
-          .auth-action-box {
-            background: var(--bg-main);
-            padding: 20px;
-            border-radius: 16px;
-            border: 1px solid #334155;
-          }
-
-          .auth-action-box h3 { margin-top: 0; font-size: 1rem; }
-          .auth-action-box p { font-size: 0.8rem; color: var(--text-muted); margin-bottom: 15px; }
-
-          .google-signin-btn-container {
-            display: flex;
-            justify-content: center;
-          }
+          /* --- BEJELENTKEZŐ PANELEK --- */
+          .auth-wrapper-centered { display: flex; justify-content: center; align-items: center; min-height: 70vh; }
+          .auth-hero-card { background: var(--bg-card); border: 1px solid #2e3a4e; max-width: 480px; padding: 24px; border-radius: 20px; text-align: center; }
+          .gradient-text { background: linear-gradient(135deg, #818cf8, #34d399); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+          .auth-title { font-size: 1.6rem; margin-bottom: 8px; }
+          .auth-subtitle { color: var(--text-muted); font-size: 0.9rem; line-height: 1.4; }
+          .auth-features-list { text-align: left; margin: 20px 0; display: flex; flex-direction: column; gap: 12px; }
+          .feature-row { display: flex; gap: 12px; align-items: center; }
+          .f-icon { font-size: 1.2rem; background: var(--bg-main); padding: 6px; border-radius: 8px; }
+          .feature-row h4 { margin: 0; font-size: 0.9rem; }
+          .feature-row p { margin: 0; font-size: 0.8rem; color: var(--text-muted); }
+          .auth-action-box { background: var(--bg-main); padding: 16px; border-radius: 12px; border: 1px solid #334155; }
+          .google-signin-btn-container { display: flex; justify-content: center; margin-top: 10px; }
         `}</style>
       </div>
     </GoogleOAuthProvider>
