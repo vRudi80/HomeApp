@@ -5,13 +5,12 @@ import {
 } from 'recharts';
 import { GoogleOAuthProvider, GoogleLogin, googleLogout } from '@react-oauth/google';
 import { jwtDecode } from "jwt-decode";
-import './App.css';
 
 const BACKEND_URL = "https://react-ideas-backend.onrender.com";
 const GOOGLE_CLIENT_ID = "197361744572-ih728hq5jft3fqfd1esvktvrd8i97kcp.apps.googleusercontent.com";
 const ASSET_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4'];
 
-const ADMIN_EMAILS = ['kovari.rudolf@gmail.com']; 
+const ADMIN_EMAILS = ['kovari.rudolf@gmail.com'];
 
 function App() {
   const [user, setUser] = useState<any>(null);
@@ -20,8 +19,7 @@ function App() {
   const [assets, setAssets] = useState<any[]>([]);
   const [categories, setCategories] = useState<any[]>([]);
   const [sharedUsers, setSharedUsers] = useState<any[]>([]);
-  const [myShares, setMyShares] = useState<any[]>([]); 
-  
+  const [myShares, setMyShares] = useState<any[]>([]);
   const [viewingUserId, setViewingUserId] = useState<string | null>(null);
   const [selectedAssetId, setSelectedAssetId] = useState<string>('all');
   
@@ -45,29 +43,27 @@ function App() {
     category: 'property', friendlyName: '', city: '', street: '', 
     houseNumber: '', plateNumber: '', fuelType: 'Benzin', area: '' 
   });
-  
   const [newCategory, setNewCategory] = useState({ name: '', icon: '📄', type: 'both', isPublic: false });
 
   const [filter, setFilter] = useState('Összes');
   const [viewMode, setViewMode] = useState('monthly'); 
   const [displayMode, setDisplayMode] = useState('cost');
   
-  const [chartRange, setChartRange] = useState<number | 'all' | 'custom'>(12); 
+  const [chartRange, setChartRange] = useState<number | 'all' | 'custom'>(12);
   const [customStartDate, setCustomStartDate] = useState<string>('2024-01');
   const [customEndDate, setCustomEndDate] = useState<string>(new Date().toISOString().substring(0, 7));
 
   const isAdmin = user && ADMIN_EMAILS.includes(user.email);
   const isReadOnly = viewingUserId !== null && viewingUserId !== user?.sub;
 
-  // --- LEKÉRDEZÉSEK ---
-
+  // --- API LEKÉRDEZÉSEK ---
   const fetchMyShares = async (token: string) => {
     try {
       const res = await fetch(`${BACKEND_URL}/api/shares/owned`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) setMyShares(await res.json());
-    } catch (e) { console.error("Hiba", e); }
+    } catch (e) { console.error("Hiba a megosztások betöltésekor", e); }
   };
 
   const fetchSharedAccounts = async (token: string) => {
@@ -103,11 +99,10 @@ function App() {
       
       const loadedCategories = Array.isArray(catData) ? catData : [];
       setCategories(loadedCategories);
-      
       if (loadedCategories.length > 0 && !type) {
         setType(loadedCategories[0].Name);
       }
-    } catch (err) { console.error("Adatlekérési hiba"); }
+    } catch (err) { console.error("Adatlekérési hiba", err); }
   };
 
   const handleLoginSuccess = async (token: string) => {
@@ -126,7 +121,7 @@ function App() {
         headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
       });
     } catch (e) {
-      console.error("Hiba a bejelentkezés", e);
+      console.error("Hiba a bejelentkezésnél", e);
       forceLogout();
     }
   };
@@ -176,10 +171,10 @@ function App() {
         setRecordMode('invoice');
       }
     }
-    
     if (allowed.length > 0 && !allowed.includes(type)) setType(allowed[0]);
   }, [targetAssetId, type, assets, categories, editingRecordId]);
 
+  // --- GRAPH ADATOK ELŐKÉSZÍTÉSE ---
   const chartData = useMemo(() => {
     const dataMap: { [key: string]: any } = {};
     const fRec = records.filter((r: any) => selectedAssetId === 'all' || String(r.AssetId) === String(selectedAssetId));
@@ -231,7 +226,6 @@ function App() {
 
         if (key && key.length >= 4) {
           if (!dataMap[key]) dataMap[key] = { label: key };
-          
           if (isIncome) {
             const incomeKey = `${label}_income`;
             dataMap[key][incomeKey] = (dataMap[key][incomeKey] || 0) + amount;
@@ -243,7 +237,6 @@ function App() {
     }
     
     const sortedData = Object.values(dataMap).sort((a: any, b: any) => a.label.localeCompare(b.label));
-    
     if (chartRange === 'custom') {
       return sortedData.filter((item: any) => {
         const itemDate = item.label; 
@@ -256,26 +249,25 @@ function App() {
     if (viewMode === 'monthly' && chartRange !== 'all') {
       return sortedData.slice(-chartRange as number);
     }
-    
     return sortedData;
   }, [records, invoices, assets, filter, displayMode, viewMode, selectedAssetId, categories, chartRange, customStartDate, customEndDate]);
 
+  // --- TOOLTIP DIZÁJN ---
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
       const unit = displayMode === 'cost' ? 'Ft' : '';
-
       if (displayMode === 'usage') {
         const total = payload.reduce((sum: number, entry: any) => sum + (Number(entry.value) || 0), 0);
         return (
-          <div style={{ backgroundColor: '#1e293b', padding: '12px', border: '1px solid #334155', borderRadius: '8px', color: '#f8fafc', boxShadow: '0 4px 6px rgba(0,0,0,0.3)', minWidth: '200px' }}>
-            <p style={{ margin: '0 0 8px 0', fontWeight: 'bold', borderBottom: '1px solid #334155', paddingBottom: '6px' }}>{label}</p>
+          <div className="custom-tooltip-box">
+            <p className="tooltip-title">{label}</p>
             {payload.map((entry: any, index: number) => (
-              <div key={index} style={{ display: 'flex', justifyContent: 'space-between', gap: '20px', fontSize: '0.85rem', marginBottom: '6px' }}>
+              <div key={index} className="tooltip-row">
                 <span style={{ color: entry.color }}>{entry.name}:</span>
-                <span style={{ fontWeight: 600 }}>{Number(entry.value).toLocaleString()} {unit}</span>
+                <span className="tooltip-val">{Number(entry.value).toLocaleString()} {unit}</span>
               </div>
             ))}
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '20px', fontSize: '0.95rem', marginTop: '8px', paddingTop: '8px', borderTop: '1px solid #334155', fontWeight: 'bold', color: '#10b981' }}>
+            <div className="tooltip-total font-emerald">
               <span>Összesen:</span><span>{total.toLocaleString()} {unit}</span>
             </div>
           </div>
@@ -284,51 +276,49 @@ function App() {
 
       const expenses = payload.filter((p: any) => !p.dataKey.endsWith('_income'));
       const incomes = payload.filter((p: any) => p.dataKey.endsWith('_income'));
-      
       const totalExp = expenses.reduce((sum: number, p: any) => sum + Number(p.value), 0);
       const totalInc = incomes.reduce((sum: number, p: any) => sum + Number(p.value), 0);
       const netTotal = totalInc - totalExp;
 
       return (
-        <div style={{ backgroundColor: '#1e293b', padding: '12px', border: '1px solid #334155', borderRadius: '8px', color: '#f8fafc', boxShadow: '0 4px 6px rgba(0,0,0,0.3)', minWidth: '220px' }}>
-          <p style={{ margin: '0 0 10px 0', fontWeight: 'bold', borderBottom: '1px solid #334155', paddingBottom: '6px' }}>{label}</p>
-          
+        <div className="custom-tooltip-box">
+          <p className="tooltip-title">{label}</p>
           {incomes.length > 0 && (
-            <div style={{ marginBottom: '10px' }}>
-              <div style={{ color: '#10b981', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '4px' }}>Bevételek</div>
+            <div className="tooltip-section">
+              <div className="section-badge badge-income">Bevételek</div>
               {incomes.map((entry: any, index: number) => (
-                <div key={`inc-${index}`} style={{ display: 'flex', justifyContent: 'space-between', gap: '15px', fontSize: '0.85rem', marginBottom: '4px' }}>
+                <div key={`inc-${index}`} className="tooltip-row">
                   <span style={{ color: entry.color }}>{entry.name.replace(' (Bevétel)', '')}:</span>
-                  <span style={{ fontWeight: 600, color: '#10b981' }}>+{Number(entry.value).toLocaleString()} {unit}</span>
+                  <span className="font-emerald">+{Number(entry.value).toLocaleString()} {unit}</span>
                 </div>
               ))}
             </div>
           )}
 
           {expenses.length > 0 && (
-            <div style={{ marginBottom: '10px' }}>
-              <div style={{ color: '#f87171', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '4px' }}>Kiadások</div>
+            <div className="tooltip-section">
+              <div className="section-badge badge-expense">Kiadások</div>
               {expenses.map((entry: any, index: number) => (
-                <div key={`exp-${index}`} style={{ display: 'flex', justifyContent: 'space-between', gap: '15px', fontSize: '0.85rem', marginBottom: '4px' }}>
+                <div key={`exp-${index}`} className="tooltip-row">
                   <span style={{ color: entry.color }}>{entry.name}:</span>
-                  <span style={{ fontWeight: 600, color: '#f8fafc' }}>{Number(entry.value).toLocaleString()} {unit}</span>
+                  <span>{Number(entry.value).toLocaleString()} {unit}</span>
                 </div>
               ))}
             </div>
           )}
           
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '12px', paddingTop: '10px', borderTop: '1px dashed #475569', fontSize: '0.85rem' }}>
+          <div className="tooltip-footer">
             {totalExp > 0 && (
-              <div style={{ display: 'flex', justifyContent: 'space-between', color: '#f87171' }}>
+              <div className="tooltip-row font-rose">
                 <span>Össz. Kiadás:</span><span>-{totalExp.toLocaleString()} {unit}</span>
               </div>
             )}
             {totalInc > 0 && (
-              <div style={{ display: 'flex', justifyContent: 'space-between', color: '#10b981' }}>
+              <div className="tooltip-row font-emerald">
                 <span>Össz. Bevétel:</span><span>+{totalInc.toLocaleString()} {unit}</span>
               </div>
             )}
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', fontSize: '1rem', marginTop: '4px', color: netTotal > 0 ? '#10b981' : (netTotal < 0 ? '#f87171' : '#f8fafc') }}>
+            <div className="tooltip-net" style={{ color: netTotal > 0 ? '#10b981' : (netTotal < 0 ? '#f87171' : '#f8fafc') }}>
               <span>Egyenleg:</span>
               <span>{netTotal > 0 ? '+' : ''}{netTotal.toLocaleString()} {unit}</span>
             </div>
@@ -339,31 +329,24 @@ function App() {
     return null;
   };
 
-  // --- HANDLEREK ---
-
+  // --- MENTÉSEK ÉS APIS MŰVELETEK ---
   const handleAssetSave = async () => {
     if (!newAsset.friendlyName) return alert("Adj nevet az eszköznek / személynek!");
     const method = editingAssetId ? 'PUT' : 'POST';
     const url = editingAssetId ? `${BACKEND_URL}/api/assets/${editingAssetId}` : `${BACKEND_URL}/api/assets`;
-    
     try {
       const res = await fetch(url, {
         method, 
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${user.token}` },
         body: JSON.stringify(newAsset)
       });
-      
       if (res.ok) {
         setEditingAssetId(null);
         setNewAsset({ category: 'property', friendlyName: '', city: '', street: '', houseNumber: '', plateNumber: '', fuelType: 'Benzin', area: '' });
         setShowAssetManager(false);
         fetchAll(user.token);
-      } else {
-        alert("Hiba történt.");
-      }
-    } catch (error) {
-      alert("Hálózati hiba!");
-    }
+      } else { alert("Hiba történt."); }
+    } catch (error) { alert("Hálózati hiba!"); }
   };
 
   const handleCategorySave = async () => {
@@ -385,7 +368,7 @@ function App() {
   };
 
   const handleCategoryDelete = async (id: number) => {
-    if (!window.confirm("Biztosan törlöd a kategóriát? A hozzá tartozó adatoknál is gondot okozhat!")) return;
+    if (!window.confirm("Biztosan törlöd a kategóriát?")) return;
     const res = await fetch(`${BACKEND_URL}/api/categories/${id}`, {
       method: 'DELETE', headers: { 'Authorization': `Bearer ${user.token}` }
     });
@@ -407,7 +390,6 @@ function App() {
     const dateStr = String(item.d).substring(0, 10);
     if (item.lType === 'meter') setMeterDate(dateStr);
     else setInvoiceDate(dateStr);
-
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -418,12 +400,11 @@ function App() {
   };
 
   const handleSave = async () => {
-    if (!targetAssetId || targetAssetId === 'all') return alert("Kérlek, válassz ki egy konkrét eszközt a mentéshez!");
+    if (!targetAssetId || targetAssetId === 'all') return alert("Kérlek, válassz ki egy konkrét eszközt!");
     if (!value) return alert("Kérlek, add meg az értéket!");
     
     const currentCat = categories.find(c => c.Name === type);
     const isInvoiceType = currentCat?.Type === 'invoice_only' || currentCat?.Type === 'income';
-    
     const body = { 
       type, 
       value: parseFloat(value), 
@@ -431,12 +412,10 @@ function App() {
       date: (recordMode === 'invoice' || isInvoiceType) ? invoiceDate : meterDate, 
       assetId: parseInt(targetAssetId) 
     };
-
     const isEditing = editingRecordId !== null;
     const endpoint = isEditing 
         ? `/api/${editingRecordLType === 'meter' ? 'records' : 'invoices'}/${editingRecordId}`
         : ((recordMode === 'invoice' || isInvoiceType) ? '/api/invoices' : '/api/records');
-
     const method = isEditing ? 'PUT' : 'POST';
 
     const res = await fetch(`${BACKEND_URL}${endpoint}`, {
@@ -444,14 +423,12 @@ function App() {
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${user.token}` },
       body: JSON.stringify(body)
     });
-    
     if (res.ok) { 
       setValue(''); 
       setEditingRecordId(null);
       setEditingRecordLType(null);
-      fetchAll(user.token, viewingUserId!); 
-    } 
-    else { alert("Hiba történt a mentés/módosítás során."); }
+      fetchAll(user.token, viewingUserId!);
+    } else { alert("Hiba történt a mentés során."); }
   };
 
   const handleShare = async () => {
@@ -512,284 +489,268 @@ function App() {
 
   return (
     <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
-      <div className="app-wrapper">
-        <header className="main-header">
-          <h1 className="logo">Rezsiapp 2.0</h1>
+      <div className="app-container">
+        
+        {/* --- HEADER --- */}
+        <header className="app-header">
+          <div className="brand-logo">
+            <span className="logo-icon">⚡</span>
+            <h1>Rezsiapp <span className="version-tag">2.0</span></h1>
+          </div>
           {user && (
-            <div className="user-info">
+            <div className="user-profile-zone">
               {!isReadOnly && (
-                <button className="btn-asset-toggle" onClick={() => { setShowCategoryManager(!showCategoryManager); setShowAssetManager(false); }}>⚙️ Kategóriák</button>
+                <>
+                  <button className="nav-btn" onClick={() => { setShowCategoryManager(true); setShowAssetManager(false); }}>⚙️ Kategóriák</button>
+                  <button className="nav-btn nav-btn-primary" onClick={() => { setShowAssetManager(true); setShowCategoryManager(false); }}>🏠 Eszközök</button>
+                </>
               )}
-              {!isReadOnly && (
-                <button className="btn-asset-toggle" onClick={() => { setShowAssetManager(!showAssetManager); setShowCategoryManager(false); }}>🏠 Eszközök</button>
-              )}
-              <img src={user.picture} alt="Profil" title={user.email} />
-              <button className="btn-logout" onClick={forceLogout}>Kilépés</button>
+              <div className="user-meta" title={user.email}>
+                <img src={user.picture} alt="Avatar" className="user-avatar" />
+              </div>
+              <button className="btn-logout-icon" onClick={forceLogout} title="Kilépés">🚪</button>
             </div>
           )}
         </header>
 
-        {showCategoryManager && !isReadOnly && (
-          <section className="card asset-manager-card">
-            <h3>Kategóriák karbantartása</h3>
-            <div className="asset-form">
-              <input placeholder="Ikon (pl. ⚡)" value={newCategory.icon} onChange={(e) => setNewCategory({...newCategory, icon: e.target.value})} style={{width: '60px'}}/>
-              <input placeholder="Kategória neve" value={newCategory.name} onChange={(e) => setNewCategory({...newCategory, name: e.target.value})} />
-              <select value={newCategory.type} onChange={(e) => setNewCategory({...newCategory, type: e.target.value})}>
-                <option value="both">📟 Óraállás + 💰 Számla (Kiadás)</option>
-                <option value="invoice_only">Csak 💰 Számla (Kiadás)</option>
-                <option value="income">💵 Bevétel (Csak Számla)</option>
-              </select>
-              
-              {isAdmin && (
-                <label style={{color: '#94a3b8', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '5px'}}>
-                  <input type="checkbox" checked={newCategory.isPublic} onChange={(e) => setNewCategory({...newCategory, isPublic: e.target.checked})} />
-                  Publikus (Mindenki látja)
-                </label>
-              )}
-
-              <div className="asset-form-buttons">
-                <button className="btn-primary" onClick={handleCategorySave}>Mentés</button>
-                {editingCategoryId && <button className="btn-secondary" onClick={() => { setEditingCategoryId(null); setNewCategory({ name: '', icon: '📄', type: 'both', isPublic: false }); }}>Mégse</button>}
+        {/* --- MODAL: KATEGÓRIÁK --- */}
+        {showCategoryManager && (
+          <div className="modal-backdrop">
+            <div className="modal-content">
+              <div className="modal-header">
+                <h3>Kategóriák karbantartása</h3>
+                <button className="close-modal" onClick={() => setShowCategoryManager(false)}>×</button>
               </div>
-            </div>
-            
-            <div className="asset-list">
-              {categories.map((c: any) => {
-                const isPublicCat = c.UserId === null;
-                const canEdit = !isPublicCat || isAdmin;
-
-                return (
-                  <div key={c.Id} className="asset-item">
-                    <div className="asset-item-info">
-                      <span>{c.Icon} {c.Name} {isPublicCat ? '🌐' : '🔒'}</span> 
-                      <small>
-                        ({c.Type === 'both' ? 'Mindkettő' : c.Type === 'income' ? 'Bevétel' : 'Csak számla'})
-                        {!isPublicCat && <span style={{color: '#fbbf24', marginLeft: '5px'}}>• Privát</span>}
-                      </small>
-                    </div>
-                    {canEdit && (
-                      <div>
-                        <button className="btn-edit-small" onClick={() => { 
-                          setEditingCategoryId(c.Id); 
-                          setNewCategory({ name: c.Name, icon: c.Icon, type: c.Type, isPublic: isPublicCat }); 
-                        }}>✏️</button>
-                        <button className="btn-edit-small" onClick={() => handleCategoryDelete(c.Id)}>❌</button>
-                      </div>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
-          </section>
-        )}
-
-        {showAssetManager && user && !isReadOnly && (
-          <section className="card asset-manager-card">
-            <h3>{editingAssetId ? "Módosítás" : "Új eszköz / Személy"}</h3>
-            <div className="asset-form">
-              <select value={newAsset.category} onChange={(e) => setNewAsset({...newAsset, category: e.target.value})}>
-                <option value="property">🏠 Ingatlan</option>
-                <option value="car">🚗 Jármű</option>
-                <option value="person">👤 Személy (Saját/Családtag)</option>
-              </select>
-              <input placeholder="Név" value={newAsset.friendlyName} onChange={(e) => setNewAsset({...newAsset, friendlyName: e.target.value})} />
-              
-              {newAsset.category === 'property' && (
-                <>
-                  <input placeholder="Város" value={newAsset.city} onChange={(e) => setNewAsset({...newAsset, city: e.target.value})} />
-                  <input placeholder="Utca, házszám" value={newAsset.street} onChange={(e) => setNewAsset({...newAsset, street: e.target.value})} />
-                  <input placeholder="m²" type="number" value={newAsset.area} onChange={(e) => setNewAsset({...newAsset, area: e.target.value})} />
-                </>
-              )}
-              {newAsset.category === 'car' && (
-                <input placeholder="Rendszám" value={newAsset.plateNumber} onChange={(e) => setNewAsset({...newAsset, plateNumber: e.target.value})} />
-              )}
-
-              <div className="asset-form-buttons">
-                 <button className="btn-primary" onClick={handleAssetSave}>Mentés</button>
-                 {editingAssetId && <button className="btn-secondary" onClick={() => { setEditingAssetId(null); }}>Mégse</button>}
-              </div>
-            </div>
-            <div className="asset-list">
-              {assets.map((a: any) => (
-                <div key={a.Id} className="asset-item">
-                  <div className="asset-item-info">
-                    <span>{a.Category === 'car' ? '🚗' : a.Category === 'person' ? '👤' : '🏠'} {a.FriendlyName}</span>
-                  </div>
-                  <button className="btn-edit-small" onClick={() => { 
-                    setEditingAssetId(a.Id);
-                    setNewAsset({ 
-                      category: a.Category || 'property', friendlyName: a.FriendlyName || '', city: a.City || '', street: a.Street || '',
-                      houseNumber: a.HouseNumber || '', plateNumber: a.PlateNumber || '', fuelType: a.FuelType || 'Benzin', area: a.Area || ''
-                    });
-                  }}>✏️</button>
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
-
-        {user ? (
-          <>
-            <div className="top-row" style={{ display: 'flex', gap: '15px', flexWrap: 'wrap' }}>
-              <section className="card share-card compact">
-                <select value={selectedAssetId} onChange={(e) => setSelectedAssetId(e.target.value)}>
-                  <option value="all">🌐 Összesített nézet</option>
-                  {assets.map((a: any) => (<option key={a.Id} value={a.Id}>{a.Category === 'car' ? '🚗' : a.Category === 'person' ? '👤' : '🏠'} {a.FriendlyName}</option>))}
+              <div className="modal-form">
+                <input placeholder="Ikon (pl. ⚡)" value={newCategory.icon} onChange={(e) => setNewCategory({...newCategory, icon: e.target.value})} style={{width: '60px'}}/>
+                <input placeholder="Kategória neve" value={newCategory.name} onChange={(e) => setNewCategory({...newCategory, name: e.target.value})} />
+                <select value={newCategory.type} onChange={(e) => setNewCategory({...newCategory, type: e.target.value})}>
+                  <option value="both">📟 Óraállás + 💰 Számla (Kiadás)</option>
+                  <option value="invoice_only">Csak 💰 Számla (Kiadás)</option>
+                  <option value="income">💵 Bevétel (Csak Számla)</option>
                 </select>
-                
-                  {!isReadOnly && (
-                  <>
-                    <div className="share-input-group">
-                      <input type="email" placeholder="Kivel osztod meg?" value={shareEmail} onChange={(e) => setShareEmail(e.target.value)} />
-                      <button className="btn-share" onClick={handleShare}>+</button>
-                    </div>
-                    
-                    {myShares.length > 0 && (
-                      <div className="shared-list" style={{ marginTop: '15px', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '10px' }}>
-                        <p style={{ fontSize: '0.75rem', color: '#94a3b8', marginBottom: '8px' }}>Hozzáféréssel rendelkeznek:</p>
-                        {myShares.map(s => (
-                          <div key={s.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '5px', fontSize: '0.85rem' }}>
-                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.shared_with_email}</span>
-                            <button onClick={() => revokeShare(s.id)} style={{ background: 'transparent', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: '0.8rem' }}>Visszavonás</button>
-                          </div>
-                        ))}
+                {isAdmin && (
+                  <label className="checkbox-label">
+                    <input type="checkbox" checked={newCategory.isPublic} onChange={(e) => setNewCategory({...newCategory, isPublic: e.target.checked})} />
+                    Publikus (Mindenki látja)
+                  </label>
+                )}
+                <button className="btn-save-action" onClick={handleCategorySave}>Mentés</button>
+              </div>
+              <div className="modal-list">
+                {categories.map((c: any) => (
+                  <div key={c.Id} className="list-item-row">
+                    <span>{c.Icon} {c.Name} {!c.UserId ? '🌐' : '🔒'}</span>
+                    {(!c.UserId || isAdmin) && (
+                      <div className="actions">
+                        <button className="action-inline-btn" onClick={() => { setEditingCategoryId(c.Id); setNewCategory({ name: c.Name, icon: c.Icon, type: c.Type, isPublic: !c.UserId }); }}>✏️</button>
+                        <button className="action-inline-btn delete" onClick={() => handleCategoryDelete(c.Id)}>❌</button>
                       </div>
                     )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* --- MODAL: ESZKÖZÖK --- */}
+        {showAssetManager && (
+          <div className="modal-backdrop">
+            <div className="modal-content">
+              <div className="modal-header">
+                <h3>{editingAssetId ? "Módosítás" : "Új eszköz / Személy"}</h3>
+                <button className="close-modal" onClick={() => setShowAssetManager(false)}>×</button>
+              </div>
+              <div className="modal-form">
+                <select value={newAsset.category} onChange={(e) => setNewAsset({...newAsset, category: e.target.value})}>
+                  <option value="property">🏠 Ingatlan</option>
+                  <option value="car">🚗 Jármű</option>
+                  <option value="person">👤 Személy</option>
+                </select>
+                <input placeholder="Megnevezés" value={newAsset.friendlyName} onChange={(e) => setNewAsset({...newAsset, friendlyName: e.target.value})} />
+                {newAsset.category === 'property' && (
+                  <>
+                    <input placeholder="Város" value={newAsset.city} onChange={(e) => setNewAsset({...newAsset, city: e.target.value})} />
+                    <input placeholder="Utca, házszám" value={newAsset.street} onChange={(e) => setNewAsset({...newAsset, street: e.target.value})} />
+                    <input placeholder="m²" type="number" value={newAsset.area} onChange={(e) => setNewAsset({...newAsset, area: e.target.value})} />
                   </>
                 )}
-              </section>
+                {newAsset.category === 'car' && (
+                  <input placeholder="Rendszám" value={newAsset.plateNumber} onChange={(e) => setNewAsset({...newAsset, plateNumber: e.target.value})} />
+                )}
+                <button className="btn-save-action" onClick={handleAssetSave}>Mentés</button>
+              </div>
+              <div className="modal-list">
+                {assets.map((a: any) => (
+                  <div key={a.Id} className="list-item-row">
+                    <span>{a.Category === 'car' ? '🚗' : a.Category === 'person' ? '👤' : '🏠'} {a.FriendlyName}</span>
+                    <button className="action-inline-btn" onClick={() => { setEditingAssetId(a.Id); setNewAsset({ category: a.Category || 'property', friendlyName: a.FriendlyName || '', city: a.City || '', street: a.Street || '', houseNumber: a.HouseNumber || '', plateNumber: a.PlateNumber || '', fuelType: a.FuelType || 'Benzin', area: a.Area || '' }); }}>✏️</button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
 
-              {sharedUsers.length > 0 && (
-                <section className="card share-card compact">
-                  <label style={{ fontSize: '0.8rem', color: '#94a3b8', display: 'block', marginBottom: '5px' }}>Nézet:</label>
-                  <select value={viewingUserId || user?.sub} onChange={(e) => {
-                    setViewingUserId(e.target.value);
-                    setSelectedAssetId('all');
-                    fetchAll(user.token, e.target.value);
-                  }}>
-                    <option value={user?.sub}>Saját adataim</option>
-                    {sharedUsers.map(su => (
-                      <option key={su.owner_id} value={su.owner_id}>{su.owner_email} adatai</option>
+        {/* --- FŐ TARTALOM --- */}
+        {user ? (
+          <div className="dashboard-grid">
+            
+            {/* BAL OLDAL: VEZÉRLŐK, ADATBEVITEL */}
+            <aside className="dashboard-sidebar">
+              
+              {/* Nézetválasztó és Megosztás */}
+              <div className="dashboard-card compact-card">
+                <div className="form-group">
+                  <label>Eszköz kiválasztása</label>
+                  <select className="styled-select" value={selectedAssetId} onChange={(e) => setSelectedAssetId(e.target.value)}>
+                    <option value="all">🌐 Összesített nézet</option>
+                    {assets.map((a: any) => (
+                      <option key={a.Id} value={a.Id}>
+                        {a.Category === 'car' ? '🚗' : a.Category === 'person' ? '👤' : '🏠'} {a.FriendlyName}
+                      </option>
                     ))}
                   </select>
-                </section>
-              )}
-            </div>
-
-            {!isReadOnly && (
-              <section className="card record-card">
-                {editingRecordId && <div style={{color: '#fbbf24', fontSize: '0.85rem', fontWeight: 'bold', marginBottom: '10px'}}>✏️ Adat szerkesztése folyamatban...</div>}
-                
-                <div className="record-type-toggle">
-                  <button className={recordMode === 'meter' ? 'active' : ''} onClick={() => setRecordMode('meter')} disabled={editingRecordId !== null || assets.find(a => String(a.Id) === String(targetAssetId))?.Category === 'car' || categories.find(c => c.Name === type)?.Type === 'invoice_only' || categories.find(c => c.Name === type)?.Type === 'income'}>📟 Óraállás</button>
-                  <button className={recordMode === 'invoice' ? 'active' : ''} onClick={() => setRecordMode('invoice')} disabled={editingRecordId !== null}>💰 Számla / Bevétel</button>
                 </div>
-                <div className="input-row">
-                  <select value={targetAssetId} onChange={(e) => setTargetAssetId(e.target.value)}><option value="">Eszköz / Személy...</option>{assets.map((a: any) => (<option key={a.Id} value={a.Id}>{a.FriendlyName}</option>))}</select>
-                  <select value={type} onChange={(e) => setType(e.target.value)}>{getAllowedTypes(targetAssetId).map(t => <option key={t} value={t}>{getIcon(t)} {t}</option>)}</select>
-                  <input type="date" value={recordMode === 'meter' ? meterDate : invoiceDate} onChange={(e) => recordMode === 'meter' ? setMeterDate(e.target.value) : setInvoiceDate(e.target.value)} />
-                  <input type="number" value={value} onChange={(e) => setValue(e.target.value)} placeholder="Érték / Ft" />
-                </div>
-                
-                <div style={{ display: 'flex', gap: '10px', marginTop: '15px' }}>
-                  <button className="btn-primary" onClick={handleSave} disabled={!targetAssetId || targetAssetId === 'all' || !value} style={{ flex: 1 }}>
-                    {editingRecordId ? 'Adat módosítása' : 'Adat mentése'}
-                  </button>
-                  {editingRecordId && (
-                    <button className="btn-secondary" onClick={cancelRecordEdit} style={{ background: 'transparent', border: '1px solid #475569', color: '#cbd5e1' }}>Mégse</button>
-                  )}
-                </div>
-              </section>
-            )}
 
-            <div className="controls-bar">
-              <div className="filter-buttons">
-                {categories.map(c => (
-                  <button key={c.Id} className={filter === c.Name ? 'active' : ''} onClick={() => setFilter(c.Name)} style={filter === c.Name ? {backgroundColor: getColor(c.Name), borderColor: getColor(c.Name)} : {}}>{c.Icon} {c.Name}</button>
-                ))}
-                {displayMode === 'cost' && (
-                  <>
-                    <button className={filter === 'Összes kiadás' ? 'active' : ''} onClick={() => setFilter('Összes kiadás')} style={{backgroundColor: filter === 'Összes kiadás' ? getColor('Összes kiadás') : ''}}>{getIcon('Összes kiadás')} Összes kiadás</button>
-                    <button className={filter === 'Összes' ? 'active' : ''} onClick={() => setFilter('Összes')} style={{backgroundColor: filter === 'Összes' ? getColor('Összes') : ''}}>{getIcon('Összes')} Összes (+Bevétel)</button>
-                  </>
-                )}
-              </div>
-              <div className="mode-toggle">
-                <button className={displayMode === 'usage' ? 'active' : ''} disabled={categories.find(c => c.Name === filter)?.Type === 'invoice_only' || categories.find(c => c.Name === filter)?.Type === 'income' || filter === 'Összes' || filter === 'Összes kiadás'} onClick={() => setDisplayMode('usage')}>Fogyasztás</button>
-                <button className={displayMode === 'cost' ? 'active' : ''} onClick={() => setDisplayMode('cost')}>Költség</button>
-              </div>
-              
-              <div className="view-toggle" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px' }}>
-                <button className={viewMode === 'monthly' ? 'active' : ''} onClick={() => setViewMode('monthly')}>Havi</button>
-                <button className={viewMode === 'annual' ? 'active' : ''} onClick={() => setViewMode('annual')}>Éves</button>
-                
-                <select 
-                  value={chartRange} 
-                  onChange={(e) => {
-                    const val = e.target.value;
-                    setChartRange(val === 'all' || val === 'custom' ? val : parseInt(val));
-                  }}
-                  style={{ 
-                    padding: '6px 12px', 
-                    borderRadius: '20px', 
-                    background: '#1e293b', 
-                    color: '#94a3b8', 
-                    border: '1px solid #334155',
-                    cursor: 'pointer',
-                    outline: 'none'
-                  }}
-                >
-                  {viewMode === 'monthly' && <option value={6}>Utolsó 6 hónap</option>}
-                  {viewMode === 'monthly' && <option value={12}>Utolsó 12 hónap</option>}
-                  {viewMode === 'monthly' && <option value={24}>Utolsó 24 hónap</option>}
-                  <option value="all">Összes mutatása</option>
-                  <option value="custom">Egyedi tartomány...</option>
-                </select>
-
-                {chartRange === 'custom' && (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                    <input 
-                      type="month" 
-                      value={customStartDate} 
-                      onChange={(e) => setCustomStartDate(e.target.value)} 
-                      style={{ padding: '4px 8px', borderRadius: '15px', background: '#1e293b', color: '#94a3b8', border: '1px solid #334155', outline: 'none', colorScheme: 'dark' }}
-                    />
-                    <span style={{color: '#94a3b8'}}>-</span>
-                    <input 
-                      type="month" 
-                      value={customEndDate} 
-                      onChange={(e) => setCustomEndDate(e.target.value)} 
-                      style={{ padding: '4px 8px', borderRadius: '15px', background: '#1e293b', color: '#94a3b8', border: '1px solid #334155', outline: 'none', colorScheme: 'dark' }}
-                    />
+                {sharedUsers.length > 0 && (
+                  <div className="form-group mt-3">
+                    <label>Fiókváltás</label>
+                    <select className="styled-select selector-highlight" value={viewingUserId || user?.sub} onChange={(e) => { setViewingUserId(e.target.value); setSelectedAssetId('all'); fetchAll(user.token, e.target.value); }}>
+                      <option value={user?.sub}>Saját adataim</option>
+                      {sharedUsers.map(su => (
+                        <option key={su.owner_id} value={su.owner_id}>{su.owner_email}</option>
+                      ))}
+                    </select>
                   </div>
                 )}
               </div>
-            </div>
 
-            <section className="card chart-card">
-              <div style={{ width: '100%', height: 300, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              {/* Új adat hozzáadása */}
+              {!isReadOnly && (
+                <div className="dashboard-card">
+                  <h3 className="card-title">Új Tranzakció / Érték</h3>
+                  {editingRecordId && <div className="edit-indicator">✏️ Módosítás folyamatban...</div>}
+                  
+                  <div className="tab-switcher">
+                    <button className={`tab-btn ${recordMode === 'meter' ? 'active' : ''}`} onClick={() => setRecordMode('meter')} disabled={editingRecordId !== null || assets.find(a => String(a.Id) === String(targetAssetId))?.Category === 'car' || categories.find(c => c.Name === type)?.Type === 'invoice_only' || categories.find(c => c.Name === type)?.Type === 'income'}>📟 Óraállás</button>
+                    <button className={`tab-btn ${recordMode === 'invoice' ? 'active' : ''}`} onClick={() => setRecordMode('invoice')} disabled={editingRecordId !== null}>💰 Számla</button>
+                  </div>
+
+                  <div className="vertical-form">
+                    <select value={targetAssetId} onChange={(e) => setTargetAssetId(e.target.value)}>
+                      <option value="">Eszköz...</option>
+                      {assets.map((a: any) => (<option key={a.Id} value={a.Id}>{a.FriendlyName}</option>))}
+                    </select>
+                    
+                    <select value={type} onChange={(e) => setType(e.target.value)}>
+                      {getAllowedTypes(targetAssetId).map(t => <option key={t} value={t}>{getIcon(t)} {t}</option>)}
+                    </select>
+                    
+                    <input type="date" value={recordMode === 'meter' ? meterDate : invoiceDate} onChange={(e) => recordMode === 'meter' ? setMeterDate(e.target.value) : setInvoiceDate(e.target.value)} />
+                    <input type="number" value={value} onChange={(e) => setValue(e.target.value)} placeholder="Érték (egység / Ft)" />
+                    
+                    <div className="action-buttons-row">
+                      <button className="btn-submit-form" onClick={handleSave} disabled={!targetAssetId || targetAssetId === 'all' || !value}>
+                        {editingRecordId ? 'Módosítás mentése' : 'Adat rögzítése'}
+                      </button>
+                      {editingRecordId && <button className="btn-cancel-flat" onClick={cancelRecordEdit}>Mégse</button>}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Megosztási beállítások kártya */}
+              {!isReadOnly && (
+                <div className="dashboard-card compact-card text-muted">
+                  <h4 className="sub-title">Hozzáférés megosztása</h4>
+                  <div className="flex-input-group">
+                    <input type="email" placeholder="partner@email.com" value={shareEmail} onChange={(e) => setShareEmail(e.target.value)} />
+                    <button className="btn-add-plus" onClick={handleShare}>+</button>
+                  </div>
+                  {myShares.length > 0 && (
+                    <div className="shares-mini-list">
+                      {myShares.map(s => (
+                        <div key={s.id} className="share-mini-item">
+                          <span>{s.shared_with_email}</span>
+                          <button onClick={() => revokeShare(s.id)}>visszavonás</button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </aside>
+
+            {/* JOBB OLDAL: GRAFIKONOK ÉS TÖRTÉNET */}
+            <main className="dashboard-main">
+              
+              {/* Szűrősáv (Felül) */}
+              <div className="toolbar-card">
+                <div className="category-scroll-chips">
+                  {categories.map(c => (
+                    <button key={c.Id} className={`chip-btn ${filter === c.Name ? 'active' : ''}`} onClick={() => setFilter(c.Name)} style={filter === c.Name ? {backgroundColor: getColor(c.Name), borderColor: getColor(c.Name)} : {}}>{c.Icon} {c.Name}</button>
+                  ))}
+                  {displayMode === 'cost' && (
+                    <>
+                      <button className={`chip-btn ${filter === 'Összes kiadás' ? 'active' : ''}`} onClick={() => setFilter('Összes kiadás')} style={{backgroundColor: filter === 'Összes kiadás' ? getColor('Összes kiadás') : ''}}>{getIcon('Összes kiadás')} Összes kiadás</button>
+                      <button className={`chip-btn ${filter === 'Összes' ? 'active' : ''}`} onClick={() => setFilter('Összes')} style={{backgroundColor: filter === 'Összes' ? getColor('Összes') : ''}}>{getIcon('Összes')} Összesen</button>
+                    </>
+                  )}
+                </div>
+
+                <div className="display-toggles">
+                  <div className="toggle-group">
+                    <button className={displayMode === 'usage' ? 'active' : ''} disabled={categories.find(c => c.Name === filter)?.Type === 'invoice_only' || categories.find(c => c.Name === filter)?.Type === 'income' || filter === 'Összes' || filter === 'Összes kiadás'} onClick={() => setDisplayMode('usage')}>Fogyasztás</button>
+                    <button className={displayMode === 'cost' ? 'active' : ''} onClick={() => setDisplayMode('cost')}>Költség</button>
+                  </div>
+
+                  <div className="toggle-group">
+                    <button className={viewMode === 'monthly' ? 'active' : ''} onClick={() => setViewMode('monthly')}>Havi</button>
+                    <button className={viewMode === 'annual' ? 'active' : ''} onClick={() => setViewMode('annual')}>Éves</button>
+                  </div>
+
+                  <select className="styled-range-select" value={chartRange} onChange={(e) => { const val = e.target.value; setChartRange(val === 'all' || val === 'custom' ? val : parseInt(val)); }}>
+                    {viewMode === 'monthly' && <option value={6}>Utolsó 6 hó</option>}
+                    {viewMode === 'monthly' && <option value={12}>Utolsó 12 hó</option>}
+                    {viewMode === 'monthly' && <option value={24}>Utolsó 24 hó</option>}
+                    <option value="all">Minden adat</option>
+                    <option value="custom">Egyedi...</option>
+                  </select>
+
+                  {chartRange === 'custom' && (
+                    <div className="custom-range-inputs">
+                      <input type="month" value={customStartDate} onChange={(e) => setCustomStartDate(e.target.value)} />
+                      <span>-</span>
+                      <input type="month" value={customEndDate} onChange={(e) => setCustomEndDate(e.target.value)} />
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* GRAFIKON KÁRTYA */}
+              <div className="dashboard-card chart-container-card">
                 {chartData.length > 0 ? (
-                  <ResponsiveContainer>
-                    <BarChart data={chartData}>
+                  <ResponsiveContainer width="100%" height={320}>
+                    <BarChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                       <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#334155" />
-                      <XAxis dataKey="label" fontSize={10} stroke="#94a3b8" />
-                      <YAxis fontSize={10} stroke="#94a3b8" />
-                      <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(255, 255, 255, 0.05)' }} />
-                      <Legend />
+                      <XAxis dataKey="label" fontSize={11} stroke="#94a3b8" tickLine={false} />
+                      <YAxis fontSize={11} stroke="#94a3b8" tickLine={false} axisLine={false} />
+                      <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(255, 255, 255, 0.03)' }} />
+                      <Legend iconType="circle" wrapperStyle={{ fontSize: '12px', paddingTop: '10px' }} />
                       
                       {(selectedAssetId === 'all' ? assets : assets.filter(a => String(a.Id) === String(selectedAssetId))).map((asset, idx) => {
                         const color = selectedAssetId === 'all' ? ASSET_COLORS[idx % ASSET_COLORS.length] : getColor();
                         return (
                           <React.Fragment key={asset.Id}>
-                            <Bar dataKey={asset.FriendlyName} stackId="expense" fill={color} />
+                            <Bar dataKey={asset.FriendlyName} stackId="expense" fill={color} radius={[4, 4, 0, 0]} />
                             <Bar 
                               dataKey={`${asset.FriendlyName}_income`} 
                               name={`${asset.FriendlyName} (Bevétel)`} 
                               stackId="income" 
                               fill={color} 
-                              opacity={0.6} 
+                              opacity={0.4} 
                               legendType="none" 
                             />
                           </React.Fragment>
@@ -797,80 +758,580 @@ function App() {
                       })}
                     </BarChart>
                   </ResponsiveContainer>
-                ) : <div className="no-data-msg">Nincs adat a kiválasztott időszakban</div>}
+                ) : (
+                  <div className="empty-state-notice">Nincs megjeleníthető adat a kiválasztott időszakban és szűrőkkel.</div>
+                )}
               </div>
-            </section>
 
-            <section className="list-section">
-              <div className="list-container">
-                {combinedList.map((item: any, idx) => {
-                  const asset = assets.find(a => String(a.Id) === String(item.AssetId));
-                  const cat = categories.find(c => c.Name === item.Type);
-                  const isIncome = cat?.Type === 'income';
+              {/* LISTA SZEKCIÓ */}
+              <div className="list-history-wrapper">
+                <h3 className="section-title-flat">Tranzakciós előzmények ({combinedList.length})</h3>
+                <div className="records-feed">
+                  {combinedList.map((item: any, idx) => {
+                    const asset = assets.find(a => String(a.Id) === String(item.AssetId));
+                    const cat = categories.find(c => c.Name === item.Type);
+                    const isIncome = cat?.Type === 'income';
 
-                  return (
-                    <div key={idx} className={`record-item ${item.Type}`}>
-                      <div className="record-info">
-                        <div className="record-main-line"><span>{item.lType === 'meter' ? '📟' : '💰'} {String(item.d).substring(0, 10)} ({getIcon(item.Type)} {item.Type})</span></div>
-                        <div className="asset-tag">{asset ? <>{asset.Category === 'car' ? '🚗' : asset.Category === 'person' ? '👤' : '🏠'} {asset.FriendlyName}</> : 'Nincs eszköz'}</div>
-                      </div>
-                      <div className="record-value-container">
-                        <span className="record-value" style={{ color: isIncome ? '#10b981' : '' }}>
-                          {isIncome ? '+' : ''}{(parseFloat(item.Value) || 0).toLocaleString()} {item.lType === 'meter' ? 'egység' : 'Ft'}
-                        </span>
-                        {!isReadOnly && (
-                          <div style={{ display: 'flex', gap: '5px' }}>
-                            <button className="btn-edit" onClick={() => handleEditRecord(item)} style={{ background: 'transparent', border: 'none', cursor: 'pointer', opacity: 0.7 }}>✏️</button>
-                            <button className="btn-delete" onClick={async () => { if(window.confirm("Törlöd?")) { await fetch(`${BACKEND_URL}/api/${item.lType === 'meter' ? 'records' : 'invoices'}/${item.Id || item.id}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${user.token}` } }); fetchAll(user.token); } }}>❌</button>
+                    return (
+                      <div key={idx} className="feed-item-card">
+                        <div className="feed-left">
+                          <div className={`icon-indicator ${item.lType}`}>{item.lType === 'meter' ? '📟' : '💰'}</div>
+                          <div className="feed-meta-details">
+                            <span className="feed-title">{getIcon(item.Type)} {item.Type}</span>
+                            <span className="feed-sub">{asset ? `${asset.FriendlyName}` : 'Nincs társítva'} • {String(item.d).substring(0, 10)}</span>
                           </div>
-                        )}
+                        </div>
+                        <div className="feed-right">
+                          <span className={`feed-value-tag ${isIncome ? 'income-green' : ''}`}>
+                            {isIncome ? '+' : ''}{(parseFloat(item.Value) || 0).toLocaleString()} {item.lType === 'meter' ? 'egység' : 'Ft'}
+                          </span>
+                          {!isReadOnly && (
+                            <div className="feed-actions-hover">
+                              <button className="btn-circle-edit" onClick={() => handleEditRecord(item)}>✏️</button>
+                              <button className="btn-circle-delete" onClick={async () => { if(window.confirm("Biztosan törlöd ezt a tételt?")) { await fetch(`${BACKEND_URL}/api/${item.lType === 'meter' ? 'records' : 'invoices'}/${item.Id || item.id}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${user.token}` } }); fetchAll(user.token); } }}>❌</button>
+                            </div>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </section>
-          </>
-      ) : (
-          <div className="login-container">
-            <div className="login-content">
-              <h1 className="login-title">Üdvözöl a <span className="highlight">Rezsiapp 2.0</span></h1>
-              <p className="login-subtitle">A legkényelmesebb módja a háztartási kiadások, mérőóra állások és az autód költségeinek nyomon követésére.</p>
-
-              <div className="features-grid">
-                <div className="feature-item">
-                  <span className="feature-icon">📊</span>
-                  <div className="feature-text">
-                    <h3>Vizuális statisztikák</h3>
-                    <p>Kövesd a fogyasztásod havi vagy éves szinten, átlátható és letisztult grafikonokon.</p>
-                  </div>
-                </div>
-                <div className="feature-item">
-                  <span className="feature-icon">🏠</span>
-                  <div className="feature-text">
-                    <h3>Ingatlanok és Járművek</h3>
-                    <p>Kezeld külön a lakásod rezsijét és az autód tankolásait, mindezt egyetlen helyen.</p>
-                  </div>
-                </div>
-                <div className="feature-item">
-                  <span className="feature-icon">🤝</span>
-                  <div className="feature-text">
-                    <h3>Családi megosztás</h3>
-                    <p>Oszd meg az adataidat a pároddal vagy lakótársaddal biztonságosan, egyetlen kattintással.</p>
-                  </div>
+                    );
+                  })}
                 </div>
               </div>
-            </div>
 
-            <div className="login-action-card">
-              <h2>Kezdd el most!</h2>
-              <p>A belépéshez nincs szükség külön regisztrációra, csak használd a meglévő Google fiókodat biztonságosan.</p>
-              <div className="google-btn-wrapper">
-                <GoogleLogin onSuccess={(res) => handleLoginSuccess(res.credential!)} />
+            </main>
+          </div>
+        ) : (
+          
+          /* --- LOGIN FELÜLET --- */
+          <div className="auth-wrapper-centered">
+            <div className="auth-hero-card">
+              <h1 className="auth-title">Üdvözöl a <span className="gradient-text">Rezsiapp 2.0</span></h1>
+              <p className="auth-subtitle">A legkényelmesebb, modern platform a háztartási kiadások, közüzemi mérőórák és az autód költségeinek intelligens nyomon követésére.</p>
+              
+              <div className="auth-features-list">
+                <div className="feature-row">
+                  <div className="f-icon">📊</div>
+                  <div>
+                    <h4>Vizuális Statisztika</h4>
+                    <p>Gyönyörű, egymásra halmozott grafikonok a fogyasztásodról és költségstruktúrádról.</p>
+                  </div>
+                </div>
+                <div className="feature-row">
+                  <div className="f-icon">🚗</div>
+                  <div>
+                    <h4>Multi-Eszköz Kezelés</h4>
+                    <p>Különítsd el ingatlanjaid rezsijét, autód tankolásait vagy családtagjaid egyedi kiadásait.</p>
+                  </div>
+                </div>
+                <div className="feature-row">
+                  <div className="f-icon">🤝</div>
+                  <div>
+                    <h4>Biztonságos Megosztás</h4>
+                    <p>Oszd meg fiókodat partnereiddel vagy lakótársaiddal valós időben, biztonságos Google Auth alapokon.</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="auth-action-box">
+                <h3>Kezdjük el!</h3>
+                <p>Nincs szükség bonyolult regisztrációra, lépj be azonnal Google fiókoddal.</p>
+                <div className="google-signin-btn-container">
+                  <GoogleLogin onSuccess={(res) => handleLoginSuccess(res.credential!)} />
+                </div>
               </div>
             </div>
           </div>
         )}
+
+        {/* --- GLOBAL APP EMBEDDED STYLES (A modern UI motorja) --- */}
+        <style>{`
+          :root {
+            --bg-main: #0f172a;
+            --bg-card: #1e293b;
+            --bg-hover: #334155;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --accent: #6366f1;
+            --accent-hover: #4f46e5;
+            --emerald: #10b981;
+            --rose: #f43f5e;
+            --amber: #fbbf24;
+          }
+
+          body {
+            background-color: var(--bg-main);
+            color: var(--text-main);
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+            margin: 0;
+            padding: 0;
+          }
+
+          .app-container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+          }
+
+          /* HEADER STYLING */
+          .app-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px 25px;
+            background: var(--bg-card);
+            border-radius: 16px;
+            margin-bottom: 25px;
+            border: 1px solid #2e3a4e;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+          }
+
+          .brand-logo {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+          }
+
+          .brand-logo h1 {
+            font-size: 1.3rem;
+            margin: 0;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+          }
+
+          .version-tag {
+            color: var(--accent);
+            font-size: 0.9rem;
+          }
+
+          .logo-icon {
+            font-size: 1.5rem;
+          }
+
+          .user-profile-zone {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+          }
+
+          .nav-btn {
+            background: transparent;
+            border: 1px solid var(--bg-hover);
+            color: var(--text-main);
+            padding: 8px 16px;
+            border-radius: 10px;
+            cursor: pointer;
+            font-weight: 500;
+            font-size: 0.85rem;
+            transition: all 0.2s;
+          }
+
+          .nav-btn:hover {
+            background: var(--bg-hover);
+          }
+
+          .nav-btn-primary {
+            background: var(--accent);
+            border-color: var(--accent);
+          }
+
+          .nav-btn-primary:hover {
+            background: var(--accent-hover);
+          }
+
+          .user-avatar {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            border: 2px solid var(--accent);
+          }
+
+          .btn-logout-icon {
+            background: transparent;
+            border: none;
+            cursor: pointer;
+            font-size: 1.2rem;
+            padding: 5px;
+          }
+
+          /* GRID LAYOUT */
+          .dashboard-grid {
+            display: grid;
+            grid-template-columns: 320px 1fr;
+            gap: 25px;
+          }
+
+          @media (max-width: 968px) {
+            .dashboard-grid {
+              grid-template-columns: 1fr;
+            }
+          }
+
+          /* CARDS */
+          .dashboard-card {
+            background: var(--bg-card);
+            border-radius: 16px;
+            padding: 20px;
+            border: 1px solid #2e3a4e;
+            margin-bottom: 20px;
+          }
+
+          .compact-card {
+            padding: 15px;
+          }
+
+          .card-title {
+            margin-top: 0;
+            margin-bottom: 15px;
+            font-size: 1.05rem;
+            font-weight: 600;
+            color: var(--text-main);
+          }
+
+          /* FORMS & INPUTS */
+          .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+          }
+
+          .form-group label {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+          }
+
+          .styled-select, .vertical-form select, .vertical-form input {
+            width: 100%;
+            padding: 10px 12px;
+            background: var(--bg-main);
+            border: 1px solid #334155;
+            border-radius: 10px;
+            color: var(--text-main);
+            outline: none;
+            font-size: 0.9rem;
+            box-sizing: border-box;
+          }
+
+          .vertical-form {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            margin-top: 15px;
+          }
+
+          .tab-switcher {
+            display: flex;
+            background: var(--bg-main);
+            padding: 4px;
+            border-radius: 10px;
+            gap: 4px;
+          }
+
+          .tab-btn {
+            flex: 1;
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            padding: 8px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 0.8rem;
+            font-weight: 500;
+          }
+
+          .tab-btn.active {
+            background: var(--bg-card);
+            color: var(--text-main);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+          }
+
+          .btn-submit-form {
+            background: var(--emerald);
+            color: white;
+            border: none;
+            padding: 11px;
+            border-radius: 10px;
+            cursor: pointer;
+            font-weight: 600;
+            margin-top: 5px;
+          }
+
+          .btn-submit-form:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+          }
+
+          /* TOOLBAR & CHIPS */
+          .toolbar-card {
+            background: var(--bg-card);
+            border-radius: 16px;
+            padding: 15px;
+            border: 1px solid #2e3a4e;
+            margin-bottom: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+          }
+
+          .category-scroll-chips {
+            display: flex;
+            gap: 8px;
+            overflow-x: auto;
+            padding-bottom: 5px;
+          }
+
+          .chip-btn {
+            background: var(--bg-main);
+            border: 1px solid #334155;
+            color: var(--text-main);
+            padding: 6px 14px;
+            border-radius: 20px;
+            white-space: nowrap;
+            cursor: pointer;
+            font-size: 0.8rem;
+            transition: all 0.2s;
+          }
+
+          .chip-btn.active {
+            border-color: transparent;
+            color: white;
+          }
+
+          .display-toggles {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            align-items: center;
+          }
+
+          .toggle-group {
+            display: flex;
+            background: var(--bg-main);
+            padding: 3px;
+            border-radius: 20px;
+            border: 1px solid #334155;
+          }
+
+          .toggle-group button {
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            padding: 5px 14px;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            cursor: pointer;
+          }
+
+          .toggle-group button.active {
+            background: var(--accent);
+            color: white;
+          }
+
+          .styled-range-select {
+            background: var(--bg-main);
+            color: var(--text-muted);
+            border: 1px solid #334155;
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            outline: none;
+          }
+
+          /* RECORDS FEED */
+          .records-feed {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+          }
+
+          .feed-item-card {
+            background: var(--bg-card);
+            border: 1px solid #2e3a4e;
+            border-radius: 12px;
+            padding: 12px 16px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            transition: transform 0.2s, background 0.2s;
+          }
+
+          .feed-item-card:hover {
+            background: #243147;
+            transform: translateY(-1px);
+          }
+
+          .feed-left {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+          }
+
+          .icon-indicator {
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            background: var(--bg-main);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.95rem;
+          }
+
+          .feed-meta-details {
+            display: flex;
+            flex-direction: column;
+          }
+
+          .feed-title {
+            font-weight: 600;
+            font-size: 0.9rem;
+          }
+
+          .feed-sub {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            margin-top: 2px;
+          }
+
+          .feed-value-tag {
+            font-weight: 700;
+            font-size: 0.95rem;
+          }
+
+          .income-green {
+            color: var(--emerald);
+          }
+
+          /* RECHARTS MODERNISED TOOLTIP */
+          .custom-tooltip-box {
+            background: #1e293b;
+            padding: 12px;
+            border: 1px solid #334155;
+            border-radius: 8px;
+            color: #f8fafc;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.4);
+            min-width: 200px;
+          }
+
+          .tooltip-title {
+            margin: 0 0 8px 0;
+            font-weight: bold;
+            border-bottom: 1px solid #334155;
+            padding-bottom: 6px;
+          }
+
+          .tooltip-row {
+            display: flex;
+            justify-content: space-between;
+            gap: 20px;
+            font-size: 0.8rem;
+            margin-bottom: 4px;
+          }
+
+          .tooltip-total {
+            display: flex;
+            justify-content: space-between;
+            font-weight: bold;
+            border-top: 1px solid #334155;
+            margin-top: 6px;
+            padding-top: 6px;
+          }
+
+          /* MODAL WINDOWS */
+          .modal-backdrop {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(15, 23, 42, 0.8);
+            backdrop-filter: blur(4px);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+          }
+
+          .modal-content {
+            background: var(--bg-card);
+            border: 1px solid #334155;
+            border-radius: 20px;
+            padding: 25px;
+            width: 100%;
+            max-width: 500px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.4);
+          }
+
+          .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+          }
+
+          .modal-header h3 { margin: 0; font-size: 1.15rem; }
+
+          .close-modal {
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            font-size: 1.5rem;
+            cursor: pointer;
+          }
+
+          /* AUTH HERO */
+          .auth-wrapper-centered {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 75vh;
+          }
+
+          .auth-hero-card {
+            background: var(--bg-card);
+            border: 1px solid #2e3a4e;
+            max-width: 550px;
+            padding: 40px;
+            border-radius: 24px;
+            text-align: center;
+            box-shadow: 0 15px 35px rgba(0,0,0,0.3);
+          }
+
+          .gradient-text {
+            background: linear-gradient(135deg, #818cf8, #34d399);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+          }
+
+          .auth-title { font-size: 1.8rem; margin-bottom: 12px; }
+          .auth-subtitle { color: var(--text-muted); font-size: 0.9rem; line-height: 1.5; }
+
+          .auth-features-list {
+            text-align: left;
+            margin: 30px 0;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+          }
+
+          .feature-row { display: flex; gap: 15px; align-items: flex-start; }
+          .f-icon { font-size: 1.4rem; background: var(--bg-main); padding: 8px; border-radius: 10px; }
+          .feature-row h4 { margin: 0; font-size: 0.95rem; }
+          .feature-row p { margin: 2px 0 0 0; font-size: 0.8rem; color: var(--text-muted); }
+
+          .auth-action-box {
+            background: var(--bg-main);
+            padding: 20px;
+            border-radius: 16px;
+            border: 1px solid #334155;
+          }
+
+          .auth-action-box h3 { margin-top: 0; font-size: 1rem; }
+          .auth-action-box p { font-size: 0.8rem; color: var(--text-muted); margin-bottom: 15px; }
+
+          .google-signin-btn-container {
+            display: flex;
+            justify-content: center;
+          }
+        `}</style>
       </div>
     </GoogleOAuthProvider>
   );
