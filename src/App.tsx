@@ -53,10 +53,42 @@ function App() {
   const [customStartDate, setCustomStartDate] = useState<string>('2024-01');
   const [customEndDate, setCustomEndDate] = useState<string>(new Date().toISOString().substring(0, 7));
 
+  // Az eszköz-kategória hozzárendeléseket tároló állapot
+  const [assetCategoryMap, setAssetCategoryMap] = useState<{ [key: string]: string[] }>({});
+
   const isAdmin = user && ADMIN_EMAILS.includes(user.email);
   const isReadOnly = viewingUserId !== null && viewingUserId !== user?.sub;
 
-  // --- API LEKÉRDEZÉSEK ---
+  // --- API MŰVELETEK ---
+  const handleToggleCategoryForAsset = async (assetId: string, categoryName: string) => {
+    if (isReadOnly) return;
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/asset-categories/toggle`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${user.token}`
+        },
+        body: JSON.stringify({ assetId: parseInt(assetId), categoryName })
+      });
+      if (res.ok) {
+        const currentAllowed = assetCategoryMap[assetId] || [];
+        let updated: string[];
+        if (currentAllowed.includes(categoryName)) {
+          updated = currentAllowed.filter(c => c !== categoryName);
+        } else {
+          updated = [...currentAllowed, categoryName];
+        }
+        setAssetCategoryMap({ ...assetCategoryMap, [assetId]: updated });
+      } else {
+        alert("Nem sikerült menteni a beállítást az adatbázisba.");
+      }
+    } catch (e) {
+      console.error(e);
+      alert("Hálózati hiba a mentés során.");
+    }
+  };
+
   const fetchMyShares = async (token: string) => {
     try {
       const res = await fetch(`${BACKEND_URL}/api/shares/owned`, {
@@ -80,11 +112,12 @@ function App() {
     if (!id || !token) return;
     try {
       const headers = { 'Authorization': `Bearer ${token}` };
-      const [recRes, invRes, assetRes, catRes] = await Promise.all([
+      const [recRes, invRes, assetRes, catRes, acRes] = await Promise.all([
         fetch(`${BACKEND_URL}/api/records?userId=${id}`, { headers }),
         fetch(`${BACKEND_URL}/api/invoices?userId=${id}`, { headers }),
         fetch(`${BACKEND_URL}/api/assets?userId=${id}`, { headers }),
-        fetch(`${BACKEND_URL}/api/categories?userId=${id}`, { headers })
+        fetch(`${BACKEND_URL}/api/categories?userId=${id}`, { headers }),
+        fetch(`${BACKEND_URL}/api/asset-categories?userId=${id}`, { headers })
       ]);
       if (recRes.status === 401) return forceLogout();
       
@@ -92,6 +125,7 @@ function App() {
       const invData = await invRes.json();
       const astData = await assetRes.json();
       const catData = await catRes.json();
+      const acData = await acRes.json();
       
       setRecords(Array.isArray(recData) ? recData : []);
       setInvoices(Array.isArray(invData) ? invData : []);
@@ -101,6 +135,17 @@ function App() {
       setCategories(loadedCategories);
       if (loadedCategories.length > 0 && !type) {
         setType(loadedCategories[0].Name);
+      }
+
+      // Adatbázis mátrix eredmény feldolgozása a felület számára
+      if (Array.isArray(acData)) {
+        const map: { [key: string]: string[] } = {};
+        acData.forEach((row: any) => {
+          const aId = String(row.asset_id);
+          if (!map[aId]) map[aId] = [];
+          map[aId].push(row.category_name);
+        });
+        setAssetCategoryMap(map);
       }
     } catch (err) { console.error("Adatlekérési hiba", err); }
   };
@@ -142,9 +187,24 @@ function App() {
   const getAllowedTypes = (assetId: string) => {
     const allCatNames = categories.map(c => c.Name);
     if (!assetId || assetId === 'all') return allCatNames;
+    
+    // Ha az adatbázisból jött egyedi mátrix beállítás az eszközhöz, azt használjuk
+    if (assetCategoryMap[assetId] && assetCategoryMap[assetId].length > 0) {
+      return assetCategoryMap[assetId];
+    }
+
+    // Automatikus intelligens fallback, ha még üres az adatbázis mátrix
     const asset = assets.find((a: any) => String(a.Id) === String(assetId));
-    if (asset?.Category === 'property' || asset?.Category === 'person') return allCatNames;
-    return allCatNames.includes('Üzemanyag') ? ['Üzemanyag'] : allCatNames;
+    if (asset?.Category === 'car') {
+      return allCatNames.includes('Üzemanyag') ? ['Üzemanyag'] : allCatNames;
+    }
+    if (asset?.Category === 'person') {
+      return allCatNames.filter(name => ['Fizetés', 'Túrájós', 'Fotózás', 'Egyéb'].includes(name));
+    }
+    if (asset?.Category === 'property') {
+      return allCatNames.filter(name => !['Üzemanyag', 'Fizetés'].includes(name));
+    }
+    return allCatNames;
   };
 
   useEffect(() => {
@@ -172,9 +232,9 @@ function App() {
       }
     }
     if (allowed.length > 0 && !allowed.includes(type)) setType(allowed[0]);
-  }, [targetAssetId, type, assets, categories, editingRecordId]);
+  }, [targetAssetId, type, assets, categories, assetCategoryMap]);
 
-  // --- GRAFIKON ADATOK ELŐKÉSZÍTÉSE ---
+  // --- GRAFIKON ADATOK ---
   const chartData = useMemo(() => {
     const dataMap: { [key: string]: any } = {};
     const fRec = records.filter((r: any) => selectedAssetId === 'all' || String(r.AssetId) === String(selectedAssetId));
@@ -252,7 +312,6 @@ function App() {
     return sortedData;
   }, [records, invoices, assets, filter, displayMode, viewMode, selectedAssetId, categories, chartRange, customStartDate, customEndDate]);
 
-  // --- TOOLTIP DIZÁJN ---
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
       const unit = displayMode === 'cost' ? 'Ft' : '';
@@ -318,7 +377,7 @@ function App() {
                 <span>Össz. Bevétel:</span><span>+{totalInc.toLocaleString()} {unit}</span>
               </div>
             )}
-            <div className="tooltip-net" style={{ color: netTotal > 0 ? '#10b981' : (netTotal < 0 ? '#f87171' : '#f8fafc') }}>
+            <div className="tooltip-net" style={{ color: netTotal > 0 ? '#10b981' : (netTotal < 0 ? '#ef4444' : '#0f172a') }}>
               <span>Egyenleg:</span>
               <span>{netTotal > 0 ? '+' : ''}{netTotal.toLocaleString()} {unit}</span>
             </div>
@@ -329,9 +388,8 @@ function App() {
     return null;
   };
 
-  // --- MENTÉSEK ÉS APIS MŰVELETEK ---
   const handleAssetSave = async () => {
-    if (!newAsset.friendlyName) return alert("Adj nevet az eszköznek / személynek!");
+    if (!newAsset.friendlyName) return alert("Adj nevet az eszköznek!");
     const method = editingAssetId ? 'PUT' : 'POST';
     const url = editingAssetId ? `${BACKEND_URL}/api/assets/${editingAssetId}` : `${BACKEND_URL}/api/assets`;
     try {
@@ -459,20 +517,20 @@ function App() {
 
   const getColor = (t: string = filter) => {
     if (displayMode === 'cost' && t !== 'Összes' && t !== 'Összes kiadás') return '#10b981';
-    if (t === 'Összes') return '#6366f1';
-    if (t === 'Összes kiadás') return '#f43f5e';
+    if (t === 'Összes') return '#4f46e5';
+    if (t === 'Összes kiadás') return '#ef4444';
     switch(t) {
-      case 'Áram': return '#fbbf24';
-      case 'Víz': return '#38bdf8';
-      case 'Gáz': return '#f87171';
-      case 'Üzemanyag': return '#a855f7';
+      case 'Áram': return '#f59e0b';
+      case 'Víz': return '#06b6d4';
+      case 'Gáz': return '#f97316';
+      case 'Üzemanyag': return '#8b5cf6';
       case 'Internet': return '#ec4899';
-      case 'Szemétszállítás': return '#94a3b8';
-      case 'Albérlet': return '#f472b6';
+      case 'Szemétszállítás': return '#64748b';
+      case 'Albérlet': return '#db2777';
       default: 
         let hash = 0;
         for (let i = 0; i < t.length; i++) hash = t.charCodeAt(i) + ((hash << 5) - hash);
-        return `hsl(${hash % 360}, 70%, 60%)`;
+        return `hsl(${hash % 360}, 65%, 55%)`;
     }
   };
 
@@ -525,7 +583,7 @@ function App() {
                 <button className="close-modal" onClick={() => setShowCategoryManager(false)}>×</button>
               </div>
               <div className="modal-form">
-                <input placeholder="Ikon (pl. ⚡)" value={newCategory.icon} onChange={(e) => setNewCategory({...newCategory, icon: e.target.value})} style={{width: '70px'}}/>
+                <input placeholder="Ikon" value={newCategory.icon} onChange={(e) => setNewCategory({...newCategory, icon: e.target.value})} style={{width: '70px'}}/>
                 <input placeholder="Kategória neve" value={newCategory.name} onChange={(e) => setNewCategory({...newCategory, name: e.target.value})} />
                 <select value={newCategory.type} onChange={(e) => setNewCategory({...newCategory, type: e.target.value})}>
                   <option value="both">📟 Óraállás + 💰 Számla (Kiadás)</option>
@@ -557,14 +615,15 @@ function App() {
           </div>
         )}
 
-        {/* --- MODAL: ESZKÖZÖK --- */}
+        {/* --- MODAL: ESZKÖZÖK + ADATBÁZIS MÁTRIX NÉZET --- */}
         {showAssetManager && (
           <div className="modal-backdrop">
-            <div className="modal-content">
+            <div className="modal-content text-left">
               <div className="modal-header">
-                <h3>{editingAssetId ? "Módosítás" : "Új eszköz / Személy"}</h3>
+                <h3>{editingAssetId ? "Módosítás" : "Eszközök & Tartozó típusok"}</h3>
                 <button className="close-modal" onClick={() => setShowAssetManager(false)}>×</button>
               </div>
+              
               <div className="modal-form">
                 <select value={newAsset.category} onChange={(e) => setNewAsset({...newAsset, category: e.target.value})}>
                   <option value="property">🏠 Ingatlan</option>
@@ -572,23 +631,33 @@ function App() {
                   <option value="person">👤 Személy</option>
                 </select>
                 <input placeholder="Megnevezés" value={newAsset.friendlyName} onChange={(e) => setNewAsset({...newAsset, friendlyName: e.target.value})} />
-                {newAsset.category === 'property' && (
-                  <>
-                    <input placeholder="Város" value={newAsset.city} onChange={(e) => setNewAsset({...newAsset, city: e.target.value})} />
-                    <input placeholder="Utca, házszám" value={newAsset.street} onChange={(e) => setNewAsset({...newAsset, street: e.target.value})} />
-                    <input placeholder="m²" type="number" value={newAsset.area} onChange={(e) => setNewAsset({...newAsset, area: e.target.value})} />
-                  </>
-                )}
-                {newAsset.category === 'car' && (
-                  <input placeholder="Rendszám" value={newAsset.plateNumber} onChange={(e) => setNewAsset({...newAsset, plateNumber: e.target.value})} />
-                )}
-                <button className="btn-save-action" onClick={handleAssetSave}>Mentés</button>
+                <button className="btn-save-action" onClick={handleAssetSave}>Új eszköz mentése</button>
               </div>
-              <div className="modal-list">
+
+              <div className="matrix-title">Eszközök egyedi kategória rendelései (Adatbázis szűrő):</div>
+              <div className="modal-list scrollable-list">
                 {assets.map((a: any) => (
-                  <div key={a.Id} className="list-item-row">
-                    <span>{a.Category === 'car' ? '🚗' : a.Category === 'person' ? '👤' : '🏠'} {a.FriendlyName}</span>
-                    <button className="action-inline-btn" onClick={() => { setEditingAssetId(a.Id); setNewAsset({ category: a.Category || 'property', friendlyName: a.FriendlyName || '', city: a.City || '', street: a.Street || '', houseNumber: a.HouseNumber || '', plateNumber: a.PlateNumber || '', fuelType: a.FuelType || 'Benzin', area: a.Area || '' }); }}>✏️</button>
+                  <div key={a.Id} className="asset-matrix-card">
+                    <div className="asset-matrix-header">
+                      <strong>{a.Category === 'car' ? '🚗' : a.Category === 'person' ? '👤' : '🏠'} {a.FriendlyName}</strong>
+                      <span className="type-badge">{a.Category}</span>
+                    </div>
+                    
+                    <div className="matrix-checkbox-grid">
+                      {categories.map((c: any) => {
+                        const isAllowed = (assetCategoryMap[a.Id] || []).includes(c.Name);
+                        return (
+                          <label key={c.Id} className={`matrix-checkbox-item ${isAllowed ? 'checked' : ''}`}>
+                            <input 
+                              type="checkbox" 
+                              checked={isAllowed} 
+                              onChange={() => handleToggleCategoryForAsset(String(a.Id), c.Name)} 
+                            />
+                            <span>{c.Icon} {c.Name}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -600,11 +669,10 @@ function App() {
         {user ? (
           <div className="dashboard-grid">
             
-            {/* SIDESBAR VEZÉRLŐK */}
             <aside className="dashboard-sidebar">
               <div className="dashboard-card compact-card">
                 <div className="form-group">
-                  <label>Eszköz kiválasztása</label>
+                  <label>Eszköz / Entitás kiválasztása</label>
                   <select className="styled-select" value={selectedAssetId} onChange={(e) => setSelectedAssetId(e.target.value)}>
                     <option value="all">🌐 Összesített nézet</option>
                     {assets.map((a: any) => (
@@ -628,7 +696,6 @@ function App() {
                 )}
               </div>
 
-              {/* Új adat rögzítése */}
               {!isReadOnly && (
                 <div className="dashboard-card">
                   <h3 className="card-title">Új Tranzakció / Érték</h3>
@@ -662,7 +729,6 @@ function App() {
                 </div>
               )}
 
-              {/* Családi megosztás */}
               {!isReadOnly && (
                 <div className="dashboard-card compact-card">
                   <h4 className="sub-title">Hozzáférés megosztása</h4>
@@ -684,10 +750,8 @@ function App() {
               )}
             </aside>
 
-            {/* MAIN TARTALOM (Grafikon & Listák) */}
             <main className="dashboard-main">
               
-              {/* Eszköztár szűrőkkel */}
               <div className="toolbar-card">
                 <div className="category-scroll-chips">
                   {categories.map(c => (
@@ -734,15 +798,14 @@ function App() {
                 </div>
               </div>
 
-              {/* GRAFIKON KÁRTYA */}
               <div className="dashboard-card chart-container-card">
                 {chartData.length > 0 ? (
                   <ResponsiveContainer width="100%" height={280}>
                     <BarChart data={chartData} margin={{ top: 10, right: 5, left: -25, bottom: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#334155" />
-                      <XAxis dataKey="label" fontSize={11} stroke="#94a3b8" tickLine={false} />
-                      <YAxis fontSize={11} stroke="#94a3b8" tickLine={false} axisLine={false} />
-                      <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(255, 255, 255, 0.03)' }} />
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                      <XAxis dataKey="label" fontSize={11} stroke="#64748b" tickLine={false} />
+                      <YAxis fontSize={11} stroke="#64748b" tickLine={false} axisLine={false} />
+                      <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(0, 0, 0, 0.02)' }} />
                       <Legend iconType="circle" wrapperStyle={{ fontSize: '11px', paddingTop: '12px' }} />
                       
                       {(selectedAssetId === 'all' ? assets : assets.filter(a => String(a.Id) === String(selectedAssetId))).map((asset, idx) => {
@@ -768,7 +831,6 @@ function App() {
                 )}
               </div>
 
-              {/* LISTA SZEKCIÓ */}
               <div className="list-history-wrapper">
                 <h3 className="section-title-flat">Tranzakciós előzmények ({combinedList.length})</h3>
                 <div className="records-feed">
@@ -783,11 +845,11 @@ function App() {
                           <div className={`icon-indicator ${item.lType}`}>{item.lType === 'meter' ? '📟' : '💰'}</div>
                           <div className="feed-meta-details">
                             <span className="feed-title">{getIcon(item.Type)} {item.Type}</span>
-                            <span className="feed-sub">{asset ? `${asset.FriendlyName}` : 'Ismeretlen'} • {String(item.d).substring(0, 10)}</span>
+                            <span className="feed-sub"> {asset ? `${asset.FriendlyName}` : 'Ismeretlen'} • {String(item.d).substring(0, 10)}</span>
                           </div>
                         </div>
                         <div className="feed-right">
-                          <span className={`feed-value-tag ${isIncome ? 'income-green' : ''}`}>
+                          <span className={`feed-value-tag ${isIncome ? 'income-green' : 'expense-dark'}`}>
                             {isIncome ? '+' : ''}{(parseFloat(item.Value) || 0).toLocaleString()} {item.lType === 'meter' ? 'egység' : 'Ft'}
                           </span>
                           {!isReadOnly && (
@@ -806,32 +868,12 @@ function App() {
             </main>
           </div>
         ) : (
-          
-          /* --- LOGIN FELÜLET --- */
           <div className="auth-wrapper-centered">
             <div className="auth-hero-card">
               <h1 className="auth-title">Üdvözöl a <span className="gradient-text">Rezsiapp 2.0</span></h1>
-              <p className="auth-subtitle">A háztartási rezsiköltségek és járműkiadások okos, letisztult kezelőfelülete.</p>
-              
-              <div className="auth-features-list">
-                <div className="feature-row">
-                  <div className="f-icon">📊</div>
-                  <div>
-                    <h4>Vizuális Statisztikák</h4>
-                    <p>Egyszerűen átlátható grafikonok havi és éves bontásokban.</p>
-                  </div>
-                </div>
-                <div className="feature-row">
-                  <div className="f-icon">🚗</div>
-                  <div>
-                    <h4>Több különálló eszköz</h4>
-                    <p>Kezeld külön lakásod mérőóráit és az autók üzemanyag-költségeit.</p>
-                  </div>
-                </div>
-              </div>
-
+              <p className="auth-subtitle">Háztartási költségeid és mérőóráid letisztult, világos kezelőfelülete.</p>
               <div className="auth-action-box">
-                <p>Belépéshez használd a meglévő biztonságos Google fiókodat.</p>
+                <p>A belépéshez használd a meglévő Google fiókodat.</p>
                 <div className="google-signin-btn-container">
                   <GoogleLogin onSuccess={(res) => handleLoginSuccess(res.credential!)} />
                 </div>
@@ -840,19 +882,19 @@ function App() {
           </div>
         )}
 
-        {/* --- PRÉMIUM MOBIL-FIRST STYLING MOTOR --- */}
+        {/* --- APPS LIGHT-THEME ENGINE & RESPONSIVE FIXES --- */}
         <style>{`
           :root {
-            --bg-main: #0f172a;
-            --bg-card: #1e293b;
-            --bg-hover: #334155;
-            --text-main: #f8fafc;
-            --text-muted: #94a3b8;
-            --accent: #6366f1;
-            --accent-hover: #4f46e5;
+            --bg-main: #f8fafc;
+            --bg-card: #ffffff;
+            --bg-hover: #f1f5f9;
+            --text-main: #0f172a;
+            --text-muted: #64748b;
+            --accent: #4f46e5;
+            --accent-hover: #4338ca;
+            --border-color: #e2e8f0;
             --emerald: #10b981;
-            --rose: #f43f5e;
-            --amber: #fbbf24;
+            --rose: #ef4444;
           }
 
           body {
@@ -865,22 +907,23 @@ function App() {
           }
 
           .app-container {
-            max-width: 1400px;
+            max-width: 1280px;
             margin: 0 auto;
-            padding: 12px;
+            padding: 16px;
             box-sizing: border-box;
+            width: 100%;
           }
 
-          /* --- FEJLÉC (RESPONZÍV) --- */
           .app-header {
             background: var(--bg-card);
-            border-radius: 14px;
-            padding: 14px 16px;
-            margin-bottom: 16px;
-            border: 1px solid #2e3a4e;
+            border-radius: 16px;
+            padding: 16px 20px;
+            margin-bottom: 20px;
+            border: 1px solid var(--border-color);
             display: flex;
             flex-direction: column;
             gap: 12px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
           }
 
           .header-top-row {
@@ -890,260 +933,200 @@ function App() {
           }
 
           .brand-logo h1 {
-            font-size: 1.25rem; margin: 0; font-weight: 700;
+            font-size: 1.3rem; margin: 0; font-weight: 700; color: var(--text-main);
           }
 
-          .header-actions-row {
-            display: flex;
-            gap: 8px;
-          }
-
-          .header-actions-row .nav-btn {
-            flex: 1;
-            text-align: center;
-            padding: 10px;
-            font-size: 0.9rem;
-          }
+          .version-tag { color: var(--accent); font-size: 0.85rem; }
+          .header-actions-row { display: flex; gap: 8px; }
+          .header-actions-row .nav-btn { flex: 1; text-align: center; padding: 10px; font-size: 0.9rem; }
 
           .nav-btn {
-            background: #27354a;
-            border: 1px solid #3d4f68;
-            color: var(--text-main);
-            border-radius: 10px;
-            cursor: pointer;
-            font-weight: 600;
+            background: #f1f5f9; border: 1px solid var(--border-color); color: var(--text-main);
+            border-radius: 10px; cursor: pointer; font-weight: 600; transition: all 0.2s;
           }
+          .nav-btn:hover { background: #e2e8f0; }
+          .nav-btn-primary { background: var(--accent); border-color: var(--accent); color: white; }
+          .nav-btn-primary:hover { background: var(--accent-hover); }
 
-          .nav-btn-primary {
-            background: var(--accent);
-            border-color: var(--accent);
-          }
+          .user-profile-zone { display: flex; align-items: center; gap: 12px; }
+          .user-avatar { width: 38px; height: 38px; border-radius: 50%; border: 2px solid var(--accent); }
+          .btn-logout-icon { background: transparent; border: none; cursor: pointer; font-size: 1.3rem; }
 
-          .user-profile-zone {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-          }
-
-          .user-avatar {
-            width: 38px; height: 38px; border-radius: 50%; border: 2px solid var(--accent);
-          }
-
-          .btn-logout-icon {
-            background: transparent; border: none; cursor: pointer; font-size: 1.3rem; padding: 4px;
-          }
-
-          /* --- RÁCS ELRENDEZÉS --- */
           .dashboard-grid {
             display: grid;
             grid-template-columns: 1fr;
-            gap: 16px;
+            gap: 20px;
+            width: 100%;
           }
 
           @media (min-width: 992px) {
             .dashboard-grid {
-              grid-template-columns: 340px 1fr;
-              gap: 24px;
+              grid-template-columns: 320px 1fr;
             }
           }
 
-          /* --- KÁRTYÁK --- */
+          .dashboard-main {
+            min-width: 0;
+            width: 100%;
+          }
+
           .dashboard-card {
             background: var(--bg-card);
-            border-radius: 14px;
-            padding: 16px;
-            border: 1px solid #2e3a4e;
+            border-radius: 16px;
+            padding: 20px;
+            border: 1px solid var(--border-color);
+            box-shadow: 0 1px 3px rgba(0,0,0,0.02);
           }
 
-          .card-title {
-            margin-top: 0; margin-bottom: 14px; font-size: 1.05rem; font-weight: 600;
-          }
+          .compact-card { padding: 16px; }
+          .card-title { margin-top: 0; margin-bottom: 14px; font-size: 1.1rem; font-weight: 600; }
+          .sub-title { font-size: 0.85rem; color: var(--text-muted); text-transform: uppercase; margin-bottom: 10px; }
 
-          .sub-title {
-            margin-top: 0; margin-bottom: 8px; font-size: 0.9rem; color: var(--text-muted); text-transform: uppercase;
-          }
+          .form-group { display: flex; flex-direction: column; gap: 6px; }
+          .form-group label { font-size: 0.8rem; color: var(--text-muted); font-weight: 600; }
 
-          /* --- IOS-BIZTOS BEVITELI MEZŐK ÉS FORMOK --- */
-          .form-group {
-            display: flex; flex-direction: column; gap: 6px;
-          }
-
-          .form-group label {
-            font-size: 0.8rem; color: var(--text-muted); font-weight: 500;
-          }
-
-          /* Nagyon fontos: minimum 16px font-size, hogy a mobil Safari ne kicsinyítse le az oldalt! */
           .styled-select, .vertical-form select, .vertical-form input, .flex-input-group input {
-            width: 100%;
-            padding: 12px;
-            background: var(--bg-main);
-            border: 1px solid #334155;
-            border-radius: 10px;
-            color: var(--text-main);
-            font-size: 16px !important;
-            box-sizing: border-box;
-            outline: none;
-            height: 48px; /* Tökéletes touch magasság */
+            width: 100%; padding: 12px; background: #f8fafc; border: 1px solid var(--border-color);
+            border-radius: 10px; color: var(--text-main); font-size: 16px !important; box-sizing: border-box;
+            outline: none; height: 48px; transition: border 0.2s;
           }
+          .styled-select:focus, .vertical-form input:focus { border-color: var(--accent); }
 
-          .vertical-form {
-            display: flex; flex-direction: column; gap: 12px; margin-top: 14px;
-          }
+          .vertical-form { display: flex; flex-direction: column; gap: 12px; margin-top: 14px; }
 
-          .tab-switcher {
-            display: flex; background: var(--bg-main); padding: 4px; border-radius: 10px; gap: 4px;
-          }
-
+          .tab-switcher { display: flex; background: #f1f5f9; padding: 4px; border-radius: 10px; gap: 4px; }
           .tab-btn {
             flex: 1; background: transparent; border: none; color: var(--text-muted);
             padding: 10px; border-radius: 8px; cursor: pointer; font-size: 0.9rem; font-weight: 600;
-            height: 40px;
           }
-
-          .tab-btn.active {
-            background: var(--bg-card); color: var(--text-main); box-shadow: 0 2px 6px rgba(0,0,0,0.2);
-          }
+          .tab-btn.active { background: white; color: var(--text-main); box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
 
           .btn-submit-form {
             background: var(--emerald); color: white; border: none; padding: 12px;
             border-radius: 10px; cursor: pointer; font-weight: 700; font-size: 1rem; height: 48px;
           }
+          .btn-submit-form:disabled { opacity: 0.4; cursor: not-allowed; }
 
-          .btn-submit-form:disabled { opacity: 0.35; }
-
-          .flex-input-group {
-            display: flex; gap: 8px;
-          }
+          .flex-input-group { display: flex; gap: 8px; }
           .btn-add-plus {
             background: var(--accent); border: none; color: white; width: 48px; height: 48px;
-            border-radius: 10px; font-size: 1.2rem; cursor: pointer; font-weight: bold;
+            border-radius: 10px; font-size: 1.2rem; cursor: pointer;
           }
 
-          /* --- HORIZONTÁLIS SWIPE-OLHATÓ SZŰRŐ CHIPEK --- */
           .toolbar-card {
-            background: var(--bg-card); border-radius: 14px; padding: 14px;
-            border: 1px solid #2e3a4e; display: flex; flex-direction: column; gap: 14px;
+            background: var(--bg-card); border-radius: 16px; padding: 16px;
+            border: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 14px; margin-bottom: 20px;
           }
 
           .category-scroll-chips {
-            display: flex; gap: 8px; overflow-x: auto; padding-bottom: 6px;
+            display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px;
             -webkit-overflow-scrolling: touch;
           }
-          /* Rejtsük el az asztali görgetősávot de maradjon görgethető */
           .category-scroll-chips::-webkit-scrollbar { display: none; }
 
           .chip-btn {
-            background: var(--bg-main); border: 1px solid #334155; color: var(--text-main);
+            background: #f1f5f9; border: 1px solid var(--border-color); color: var(--text-main);
             padding: 10px 16px; border-radius: 24px; white-space: nowrap; cursor: pointer;
-            font-size: 0.85rem; font-weight: 500; height: 40px; display: inline-flex; align-items: center;
+            font-size: 0.85rem; font-weight: 500; display: inline-flex; align-items: center;
           }
+          .chip-btn.active { color: white !important; font-weight: 600; }
 
-          .chip-btn.active { border-color: transparent; color: white; font-weight: 600; }
-
-          /* --- VEZÉRLŐ GOMB CSOPORTOK --- */
-          .display-toggles {
-            display: flex; flex-direction: column; gap: 10px;
-          }
-
-          .toggle-group-row {
-            display: flex; gap: 8px; width: 100%;
-          }
-
+          .display-toggles { display: flex; flex-direction: column; gap: 12px; }
+          .toggle-group-row { display: flex; gap: 8px; width: 100%; }
           .toggle-group {
-            flex: 1; display: flex; background: var(--bg-main); padding: 4px; border-radius: 24px; border: 1px solid #334155;
+            flex: 1; display: flex; background: #f1f5f9; padding: 4px; border-radius: 24px; border: 1px solid var(--border-color);
           }
-
           .toggle-group button {
             flex: 1; background: transparent; border: none; color: var(--text-muted);
             padding: 8px; border-radius: 20px; font-size: 0.8rem; font-weight: 600; cursor: pointer;
-            height: 34px;
           }
-
           .toggle-group button.active { background: var(--accent); color: white; }
 
           .styled-range-select {
-            width: 100%; background: var(--bg-main); color: var(--text-main); border: 1px solid #334155;
-            padding: 10px; border-radius: 24px; font-size: 0.85rem; outline: none; height: 42px; text-align: center;
+            width: 100%; background: #f1f5f9; color: var(--text-main); border: 1px solid var(--border-color);
+            padding: 10px; border-radius: 24px; font-size: 0.85rem; outline: none; height: 42px;
           }
 
-          /* --- TRANZAKCIÓS LISTA --- */
-          .list-history-wrapper { margin-top: 8px; }
-          .section-title-flat { font-size: 1.05rem; margin-bottom: 12px; font-weight: 600; color: var(--text-muted); }
+          .matrix-title { font-weight: 700; font-size: 1rem; margin: 15px 0 10px 0; color: var(--text-main); }
+          .asset-matrix-card {
+            background: #f8fafc; border: 1px solid var(--border-color); border-radius: 12px;
+            padding: 14px; margin-bottom: 12px;
+          }
+          .asset-matrix-header {
+            display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;
+          }
+          .type-badge { font-size: 0.75rem; background: #e2e8f0; padding: 2px 8px; border-radius: 12px; color: var(--text-muted); font-weight: 600; }
+          
+          .matrix-checkbox-grid {
+            display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px;
+          }
+          .matrix-checkbox-item {
+            display: flex; align-items: center; gap: 6px; background: white; padding: 8px;
+            border-radius: 8px; border: 1px solid var(--border-color); cursor: pointer; font-size: 0.85rem;
+          }
+          .matrix-checkbox-item.checked { background: #e0e7ff; border-color: #c7d2fe; font-weight: 600; }
+          .scrollable-list { max-height: 380px; overflow-y: auto; padding-right: 4px; }
 
+          .list-history-wrapper { margin-top: 20px; }
+          .section-title-flat { font-size: 1.1rem; margin-bottom: 12px; font-weight: 600; color: var(--text-muted); }
           .records-feed { display: flex; flex-direction: column; gap: 8px; }
 
           .feed-item-card {
-            background: var(--bg-card); border: 1px solid #2e3a4e; border-radius: 12px;
-            padding: 12px 14px; display: flex; justify-content: space-between; align-items: center;
+            background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px;
+            padding: 14px; display: flex; justify-content: space-between; align-items: center;
           }
-
-          .feed-left { display: flex; align-items: center; gap: 10px; }
-          
+          .feed-left { display: flex; align-items: center; gap: 12px; }
           .icon-indicator {
-            width: 36px; height: 36px; border-radius: 10px; background: var(--bg-main);
-            display: flex; align-items: center; justify-content: center; font-size: 1rem;
+            width: 38px; height: 38px; border-radius: 10px; background: #f1f5f9;
+            display: flex; align-items: center; justify-content: center; font-size: 1.1rem;
           }
-
           .feed-meta-details { display: flex; flex-direction: column; }
           .feed-title { font-weight: 600; font-size: 0.95rem; }
-          .feed-sub { font-size: 0.8rem; color: var(--text-muted); margin-top: 1px; }
-
-          .feed-right { display: flex; align-items: center; gap: 10px; }
-          .feed-value-tag { font-weight: 700; font-size: 0.95rem; }
+          .feed-sub { font-size: 0.8rem; color: var(--text-muted); margin-top: 2px; }
+          .feed-right { display: flex; align-items: center; gap: 12px; }
+          .feed-value-tag { font-weight: 700; font-size: 1rem; }
           .income-green { color: var(--emerald); }
+          .expense-dark { color: var(--text-main); }
 
-          /* Elrejtett natív hover gombok helyett mobilon mindig elérhető pici gombok */
           .feed-actions-hover { display: flex; gap: 4px; }
           .btn-circle-edit, .btn-circle-delete {
-            background: var(--bg-main); border: 1px solid #334155; border-radius: 8px;
-            width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;
-            cursor: pointer; font-size: 0.85rem;
+            background: #f1f5f9; border: 1px solid var(--border-color); border-radius: 8px;
+            width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; cursor: pointer;
           }
 
-          /* --- RECHARTS MODERNEBB TOOLTIP --- */
-          .custom-tooltip-box {
-            background: #1e293b; padding: 12px; border: 1px solid #334155; border-radius: 8px;
-            color: #f8fafc; box-shadow: 0 10px 25px rgba(0,0,0,0.5); font-size: 13px;
-          }
-          .tooltip-title { margin: 0 0 6px 0; font-weight: bold; border-bottom: 1px solid #334155; padding-bottom: 4px; }
-          .tooltip-row { display: flex; justify-content: space-between; gap: 16px; margin-bottom: 3px; }
-
-          /* --- MODÁLIS ABLAKOK --- */
           .modal-backdrop {
             position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(15, 23, 42, 0.85); backdrop-filter: blur(5px);
-            display: flex; align-items: center; justify-content: center; z-index: 2000; padding: 10px;
+            background: rgba(15, 23, 42, 0.4); backdrop-filter: blur(4px);
+            display: flex; align-items: center; justify-content: center; z-index: 2000; padding: 12px;
           }
-
           .modal-content {
-            background: var(--bg-card); border: 1px solid #334155; border-radius: 16px;
-            padding: 20px; width: 100%; max-width: 460px; box-shadow: 0 20px 40px rgba(0,0,0,0.5);
-            max-height: 90vh; overflow-y: auto;
+            background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 20px;
+            padding: 24px; width: 100%; max-width: 480px; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1);
+            max-height: 90vh; overflow-y: auto; box-sizing: border-box;
           }
-
+          .text-left { text-align: left; }
           .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
           .close-modal { background: transparent; border: none; color: var(--text-muted); font-size: 1.6rem; cursor: pointer; }
-
-          .modal-form { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; }
-          .btn-save-action { background: var(--accent); color: white; border: none; padding: 12px; border-radius: 10px; font-weight: 600; font-size: 16px; cursor: pointer; }
-
+          .modal-form { display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px; }
+          .btn-save-action { background: var(--accent); color: white; border: none; padding: 12px; border-radius: 10px; font-weight: 600; cursor: pointer; }
           .list-item-row {
             display: flex; justify-content: space-between; align-items: center;
-            background: var(--bg-main); padding: 10px 12px; border-radius: 10px; margin-bottom: 6px; font-size: 0.95rem;
+            background: #f8fafc; padding: 12px; border-radius: 10px; margin-bottom: 6px; border: 1px solid var(--border-color);
           }
 
-          /* --- BEJELENTKEZŐ PANELEK --- */
+          .custom-tooltip-box {
+            background: white; padding: 12px; border: 1px solid var(--border-color); border-radius: 8px;
+            color: var(--text-main); box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); font-size: 13px;
+          }
+          .tooltip-title { margin: 0 0 6px 0; font-weight: bold; border-bottom: 1px solid var(--border-color); padding-bottom: 4px; }
+          .tooltip-row { display: flex; justify-content: space-between; gap: 16px; margin-bottom: 3px; }
+
           .auth-wrapper-centered { display: flex; justify-content: center; align-items: center; min-height: 70vh; }
-          .auth-hero-card { background: var(--bg-card); border: 1px solid #2e3a4e; max-width: 480px; padding: 24px; border-radius: 20px; text-align: center; }
-          .gradient-text { background: linear-gradient(135deg, #818cf8, #34d399); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-          .auth-title { font-size: 1.6rem; margin-bottom: 8px; }
-          .auth-subtitle { color: var(--text-muted); font-size: 0.9rem; line-height: 1.4; }
-          .auth-features-list { text-align: left; margin: 20px 0; display: flex; flex-direction: column; gap: 12px; }
-          .feature-row { display: flex; gap: 12px; align-items: center; }
-          .f-icon { font-size: 1.2rem; background: var(--bg-main); padding: 6px; border-radius: 8px; }
-          .feature-row h4 { margin: 0; font-size: 0.9rem; }
-          .feature-row p { margin: 0; font-size: 0.8rem; color: var(--text-muted); }
-          .auth-action-box { background: var(--bg-main); padding: 16px; border-radius: 12px; border: 1px solid #334155; }
+          .auth-hero-card { background: white; border: 1px solid var(--border-color); max-width: 440px; padding: 30px; border-radius: 20px; text-align: center; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); }
+          .gradient-text { color: var(--accent); font-weight: 800; }
+          .auth-title { font-size: 1.7rem; margin-bottom: 8px; }
+          .auth-subtitle { color: var(--text-muted); font-size: 0.95rem; line-height: 1.4; }
+          .auth-action-box { background: #f8fafc; padding: 16px; border-radius: 12px; border: 1px solid var(--border-color); margin-top: 20px; }
           .google-signin-btn-container { display: flex; justify-content: center; margin-top: 10px; }
         `}</style>
       </div>
