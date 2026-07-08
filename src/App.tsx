@@ -573,8 +573,16 @@ function App() {
                         <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(0,0,0,0.01)' }} />
                         <Legend iconType="circle" wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
                         {(selectedAssetId === 'all' ? assets : assets.filter(a => String(a.Id) === String(selectedAssetId))).map((asset, idx) => (
-                          <React.Fragment key={asset.Id}>
-                            <Bar dataKey={asset.FriendlyName} stackId="a" fill={ASSET_COLORS[idx % ASSET_COLORS.length]} radius={[3,3,0,0]} />
+                         <React.Fragment key={asset.Id}>
+                            <Bar dataKey={asset.FriendlyName} stackId="expense" fill={color} radius={[3, 3, 0, 0]} />
+                            <Bar 
+                              dataKey={`${asset.FriendlyName}_income`} 
+                              name={`${asset.FriendlyName} (Bevétel)`} 
+                              stackId="income" 
+                              fill={color} 
+                              opacity={0.4} 
+                              legendType="none" 
+                            />
                           </React.Fragment>
                         ))}
                       </BarChart>
