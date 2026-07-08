@@ -565,15 +565,18 @@ function App() {
                   </div>
 
                   <div className="ui-widget-card">
-                    <ResponsiveContainer width="100%" height={320}>
-                      <BarChart data={chartData} margin={{ top: 10, right: 5, left: -25, bottom: 0 }}>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                        <XAxis dataKey="label" fontSize={11} stroke="#64748b" tickLine={false} />
-                        <YAxis fontSize={11} stroke="#64748b" tickLine={false} axisLine={false} />
-                        <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(0,0,0,0.01)' }} />
-                        <Legend iconType="circle" wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
-                        {(selectedAssetId === 'all' ? assets : assets.filter(a => String(a.Id) === String(selectedAssetId))).map((asset, idx) => (
-                         <React.Fragment key={asset.Id}>
+                     <ResponsiveContainer width="100%" height={280}>
+                    <BarChart data={chartData} margin={{ top: 10, right: 5, left: -25, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                      <XAxis dataKey="label" fontSize={11} stroke="#64748b" tickLine={false} />
+                      <YAxis fontSize={11} stroke="#64748b" tickLine={false} axisLine={false} />
+                      <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(0, 0, 0, 0.02)' }} />
+                      <Legend iconType="circle" wrapperStyle={{ fontSize: '11px', paddingTop: '12px' }} />
+                      
+                      {(selectedAssetId === 'all' ? assets : assets.filter(a => String(a.Id) === String(selectedAssetId))).map((asset, idx) => {
+                        const color = selectedAssetId === 'all' ? ASSET_COLORS[idx % ASSET_COLORS.length] : getColor();
+                        return (
+                          <React.Fragment key={asset.Id}>
                             <Bar dataKey={asset.FriendlyName} stackId="expense" fill={color} radius={[3, 3, 0, 0]} />
                             <Bar 
                               dataKey={`${asset.FriendlyName}_income`} 
@@ -584,9 +587,10 @@ function App() {
                               legendType="none" 
                             />
                           </React.Fragment>
-                        ))}
-                      </BarChart>
-                    </ResponsiveContainer>
+                        );
+                      })}
+                    </BarChart>
+                  </ResponsiveContainer>
                   </div>
                 </section>
               </div>
