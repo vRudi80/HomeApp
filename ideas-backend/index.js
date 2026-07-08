@@ -23,7 +23,6 @@ const pool = mysql.createPool({
 
 // --- AUTENTIKÁCIÓ ÉS JOGOSULTSÁGOK ---
 async function verifyUser(req, res, next) {
-    // 1. Cron-job ellenőrzés
     const cronKey = req.headers['x-cron-key'];
     const SAFE_CRON_KEY = process.env.CRON_SECRET || "SzuperTitkosCronKulcs123_2026";
     
@@ -33,7 +32,6 @@ async function verifyUser(req, res, next) {
         return next();
     }
 
-    // 2. Normál Google bejelentkezés ellenőrzése
     const authHeader = req.headers.authorization;
     if (!authHeader) return res.status(401).send('Nincs token!');
     
@@ -51,7 +49,7 @@ async function verifyUser(req, res, next) {
 
 function requireAdmin(req, res, next) {
     if (!ADMIN_EMAILS.includes(req.userEmail)) {
-        return res.status(403).json({ error: 'Nincs adminisztrátori jogosultságod!' });
+        return res.status(403).json({ error: 'Nincs adminisztrátori jogosulterősséged!' });
     }
     next();
 }
@@ -62,7 +60,7 @@ async function canAccessData(requesterId, requesterEmail, targetUserId) {
     return rows.length > 0;
 }
 
-// --- ÉBRENTARTÓ VÉGPONT (Cron-jobhoz a legjobb!) ---
+// --- ÉBRENTARTÓ VÉGPONT ---
 app.get('/ping', (req, res) => {
     res.send('Szerver ébren van! 🚀');
 });
@@ -159,6 +157,47 @@ app.delete('/api/assets/:id', verifyUser, async (req, res) => {
         await pool.query('DELETE FROM assets WHERE Id = ? AND UserId = ?', [req.params.id, req.userId]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: 'Hiba' }); }
+});
+
+// --- ESZKÖZ-KATEGÓRIA ASSZOCIÁCIÓK (MÁTRIX) ---
+app.get('/api/asset-categories', verifyUser, async (req, res) => {
+    const targetUserId = req.query.userId || req.userId;
+    if (!(await canAccessData(req.userId, req.userEmail, targetUserId))) return res.status(403).json({ error: "Nincs jogosultság" });
+    try {
+        const [rows] = await pool.query(
+            `SELECT ac.asset_id, ac.category_name 
+             FROM asset_allowed_categories ac
+             JOIN assets a ON ac.asset_id = a.Id
+             WHERE a.UserId = ?`, [targetUserId]
+        );
+        res.json(rows);
+    } catch (err) {
+        res.status(500).json({ error: 'DB hiba az összerendelések lekérésekor' });
+    }
+});
+
+app.post('/api/asset-categories/toggle', verifyUser, async (req, res) => {
+    const { assetId, categoryName } = req.body;
+    try {
+        const [assets] = await pool.query('SELECT UserId FROM assets WHERE Id = ?', [assetId]);
+        if (assets.length === 0) return res.status(404).json({ error: 'Eszköz nem található' });
+        if (assets[0].UserId !== req.userId) return res.status(403).json({ error: 'Csak a saját eszközöd kategóriáit módosíthatod!' });
+
+        const [existing] = await pool.query(
+            'SELECT id FROM asset_allowed_categories WHERE asset_id = ? AND category_name = ?',
+            [assetId, categoryName]
+        );
+
+        if (existing.length > 0) {
+            await pool.query('DELETE FROM asset_allowed_categories WHERE asset_id = ? AND category_name = ?', [assetId, categoryName]);
+            res.json({ success: true, action: 'removed' });
+        } else {
+            await pool.query('INSERT INTO asset_allowed_categories (asset_id, category_name) VALUES (?, ?)', [assetId, categoryName]);
+            res.json({ success: true, action: 'added' });
+        }
+    } catch (err) {
+        res.status(500).json({ error: 'DB hiba a módosítás mentésekor' });
+    }
 });
 
 // --- MEGOSZTÁSOK (SHARES) KEZELÉSE ---
