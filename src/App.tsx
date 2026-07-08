@@ -237,6 +237,83 @@ function App() {
     return chartRange === 'custom' ? sorted : (chartRange === 'all' ? sorted : sorted.slice(-chartRange));
   }, [records, invoices, assets, filter, displayMode, viewMode, selectedAssetId, chartRange]);
 
+  // --- RENDERELESEK ÉS TOOLTIP FIX (Hatósugaras funkció) ---
+  const CustomTooltip = ({ active, payload, label }: any) => {
+    if (active && payload && payload.length) {
+      const unit = displayMode === 'cost' ? 'Ft' : '';
+      if (displayMode === 'usage') {
+        const total = payload.reduce((sum: number, entry: any) => sum + (Number(entry.value) || 0), 0);
+        return (
+          <div className="custom-tooltip-box">
+            <p className="tooltip-title">{label}</p>
+            {payload.map((entry: any, index: number) => (
+              <div key={index} className="tooltip-row">
+                <span style={{ color: entry.color }}>{entry.name}:</span>
+                <span className="tooltip-val">{Number(entry.value).toLocaleString()} {unit}</span>
+              </div>
+            ))}
+            <div className="tooltip-total font-emerald">
+              <span>Összesen:</span><span>{total.toLocaleString()} {unit}</span>
+            </div>
+          </div>
+        );
+      }
+
+      const expenses = payload.filter((p: any) => !p.dataKey.endsWith('_income'));
+      const incomes = payload.filter((p: any) => p.dataKey.endsWith('_income'));
+      const totalExp = expenses.reduce((sum: number, p: any) => sum + Number(p.value), 0);
+      const totalInc = incomes.reduce((sum: number, p: any) => sum + Number(p.value), 0);
+      const netTotal = totalInc - totalExp;
+
+      return (
+        <div className="custom-tooltip-box">
+          <p className="tooltip-title">{label}</p>
+          {incomes.length > 0 && (
+            <div className="tooltip-section">
+              <div className="section-badge badge-income">Bevételek</div>
+              {incomes.map((entry: any, index: number) => (
+                <div key={`inc-${index}`} className="tooltip-row">
+                  <span style={{ color: entry.color }}>{entry.name.replace(' (Bevétel)', '')}:</span>
+                  <span className="font-emerald">+{Number(entry.value).toLocaleString()} {unit}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {expenses.length > 0 && (
+            <div className="tooltip-section">
+              <div className="section-badge badge-expense">Kiadások</div>
+              {expenses.map((entry: any, index: number) => (
+                <div key={`exp-${index}`} className="tooltip-row">
+                  <span style={{ color: entry.color }}>{entry.name}:</span>
+                  <span>{Number(entry.value).toLocaleString()} {unit}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          
+          <div className="tooltip-footer">
+            {totalExp > 0 && (
+              <div className="tooltip-row font-rose">
+                <span>Össz. Kiadás:</span><span>-{totalExp.toLocaleString()} {unit}</span>
+              </div>
+            )}
+            {totalInc > 0 && (
+              <div className="tooltip-row font-emerald">
+                <span>Össz. Bevétel:</span><span>+{totalInc.toLocaleString()} {unit}</span>
+              </div>
+            )}
+            <div className="tooltip-net" style={{ color: netTotal > 0 ? '#10b981' : (netTotal < 0 ? '#ef4444' : '#0f172a') }}>
+              <span>Egyenleg:</span>
+              <span>{netTotal > 0 ? '+' : ''}{netTotal.toLocaleString()} {unit}</span>
+            </div>
+          </div>
+        </div>
+      );
+    }
+    return null;
+  };
+
   // --- REKORD MENTÉSE ---
   const handleSave = async () => {
     if (!targetAssetId || targetAssetId === 'all' || !value) return alert("Hiányzó adatok!");
@@ -569,10 +646,11 @@ function App() {
           }
 
           .app-container {
-            max-width: 1300px;
+            max-width: 1280px;
             margin: 0 auto;
             padding: 20px;
             box-sizing: border-box;
+            width: 100%;
           }
 
           /* --- MODERN PREMIUM HEADER --- */
@@ -625,7 +703,6 @@ function App() {
             background: var(--bg-card); border-radius: 16px; padding: 20px;
             border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.02);
           }
-          .compact-card { padding: 14px; }
           .card-heading-clean { margin: 0 0 16px 0; font-size: 1rem; font-weight: 700; }
           .input-label-flat { font-size: 0.8rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; margin-bottom: 8px; display: block; }
 
@@ -660,13 +737,11 @@ function App() {
             display: inline-flex; align-items: center; gap: 6px; transition: all 0.2s;
           }
           .grid-chip-item:hover { background: #e2e8f0; }
-          .grid-chip-item.active { box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
 
           .chart-filter-controls-row { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-top: 10px; padding-top: 12px; border-top: 1px solid var(--border); }
           .compact-btn-group { display: flex; background: #f1f5f9; padding: 3px; border-radius: 20px; border: 1px solid var(--border); }
           .compact-btn-group button { background: transparent; border: none; color: var(--text-muted); padding: 5px 12px; border-radius: 20px; font-size: 0.75rem; font-weight: 700; cursor: pointer; }
           .compact-btn-group button.active { background: white; color: var(--text-main); box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
-          .styled-range-select { background: #f1f5f9; border: 1px solid var(--border); border-radius: 20px; padding: 5px 12px; font-size: 0.75rem; }
 
           /* ================= MÁTRIX BEÁLLÍTÁSOK MENÜ ================= */
           .settings-split-dashboard {
@@ -733,11 +808,12 @@ function App() {
           .flat-delete-btn { background: transparent; border: none; color: var(--rose); cursor: pointer; font-size: 0.8rem; }
 
           /* --- CUSTOM TOOLTIP --- */
-          .custom-tooltip-box { background: white; padding: 12px; border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); font-size: 13px; }
+          .custom-tooltip-box { background: white; padding: 12px; border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); font-size: 13px; z-index: 50; }
           .tooltip-title { margin: 0 0 6px 0; font-weight: bold; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
           .tooltip-row { display: flex; justify-content: space-between; gap: 16px; }
+          .font-emerald { color: var(--emerald); }
 
-          /* --- AUTH PANELEK --- */
+          /* --- AUTH CARD --- */
           .auth-wrapper-centered { display: flex; justify-content: center; align-items: center; min-height: 60vh; }
           .auth-hero-card { background: white; border: 1px solid var(--border); max-width: 420px; padding: 32px; border-radius: 20px; text-align: center; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.05); }
           .auth-title { font-size: 1.6rem; margin-top: 0; }
