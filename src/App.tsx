@@ -182,17 +182,15 @@ function App() {
     if (savedToken) handleLoginSuccess(savedToken);
   }, []);
 
-  // Intelligens kategória engedélyezési szűrő az eszközhöz
+  // Intelligens kategória engedélyezési szűrő az eszközhöz (Fallback logikával)
   const getAllowedTypes = (assetId: string) => {
     const allCatNames = categories.map(c => c.Name);
     if (!assetId || assetId === 'all') return allCatNames;
     
-    // 1. Ha az adatbázis mátrixban már van elmentett egyedi konfiguráció, azt vesszük alapul
-    if (assetCategoryMap[assetId]) {
+    if (assetCategoryMap[assetId] && assetCategoryMap[assetId].length > 0) {
       return assetCategoryMap[assetId];
     }
     
-    // 2. Ha még nincs elmentve semmi, intelligens és logikus szűrés típus alapján (Fallback)
     const asset = assets.find((a: any) => String(a.Id) === String(assetId));
     if (asset) {
       if (asset.Category === 'car') {
@@ -213,6 +211,38 @@ function App() {
     const allowedNames = getAllowedTypes(selectedAssetId);
     return categories.filter(c => allowedNames.includes(c.Name));
   }, [categories, selectedAssetId, assetCategoryMap]);
+
+  // --- 1. ALAP TRANZAKCIÓS LISTA ÖSSZEÁLLÍTÁSA (Függőségek rendezve és optimalizálva) ---
+  const combinedList = useMemo(() => {
+    return [
+      ...(filter === 'Összes' || filter === 'Összes kiadás' ? [] : records.filter(r => (selectedAssetId === 'all' || String(r.AssetId) === String(selectedAssetId)) && r.Type === filter).map(r => ({ ...r, lType: 'meter', d: r.FormattedDate }))),
+      ...invoices.filter(i => {
+        if (selectedAssetId !== 'all' && String(i.AssetId) !== String(selectedAssetId)) return false;
+        if (filter === 'Összes') return true;
+        if (filter === 'Összes kiadás') return categories.find(c => c.Name === i.Type)?.Type !== 'income';
+        return i.Type === filter;
+      }).map(i => ({ ...i, lType: 'invoice', Value: i.Amount, d: i.Month }))
+    ].sort((a, b) => new Date(b.d).getTime() - new Date(a.d).getTime());
+  }, [records, invoices, selectedAssetId, filter, categories]);
+
+  // --- 2. KUTATÁS ÉS SZŰRÉS A TRANZAKCIÓK LAPFÜLÖN (Szigorúan a combinedList deklarációja után) ---
+  const filteredCombinedList = useMemo(() => {
+    return combinedList.filter((item: any) => {
+      const asset = assets.find(a => String(a.Id) === String(item.AssetId));
+      const assetName = asset ? asset.FriendlyName.toLowerCase() : '';
+      const itemType = item.Type.toLowerCase();
+      
+      const searchMatch = 
+        itemType.includes(txSearch.toLowerCase()) || 
+        assetName.includes(txSearch.toLowerCase()) || 
+        String(item.Value).includes(txSearch);
+        
+      const assetMatch = txAssetFilter === 'all' || String(item.AssetId) === txAssetFilter;
+      const categoryMatch = txCategoryFilter === 'all' || item.Type === txCategoryFilter;
+      
+      return searchMatch && assetMatch && categoryMatch;
+    });
+  }, [combinedList, txSearch, txAssetFilter, txCategoryFilter, assets]);
 
   // --- GRAFIKON ADATOK GENERÁLÁSA ---
   const chartData = useMemo(() => {
@@ -267,26 +297,75 @@ function App() {
       : (chartRange === 'all' ? sorted : sorted.slice(-chartRange));
   }, [records, invoices, assets, filter, displayMode, viewMode, selectedAssetId, chartRange, customStartDate, customEndDate]);
 
-  // --- TRANZAKCIÓK LAPFÜL SZŰRT LISTÁJA ---
-  const filteredCombinedList = useMemo(() => {
-    return combinedList.filter((item: any) => {
-      const asset = assets.find(a => String(a.Id) === String(item.AssetId));
-      const assetName = asset ? asset.FriendlyName.toLowerCase() : '';
-      const itemType = item.Type.toLowerCase();
-      
-      const searchMatch = 
-        itemType.includes(txSearch.toLowerCase()) || 
-        assetName.includes(txSearch.toLowerCase()) || 
-        String(item.Value).includes(txSearch);
-        
-      const assetMatch = txAssetFilter === 'all' || String(item.AssetId) === txAssetFilter;
-      const categoryMatch = txCategoryFilter === 'all' || item.Type === txCategoryFilter;
-      
-      return searchMatch && assetMatch && categoryMatch;
-    });
-  }, [combinedList, txSearch, txAssetFilter, txCategoryFilter, assets]);
+  // --- INTUITÍV GRAFIKON TOOLTIP ---
+  const CustomTooltip = ({ active, payload, label }: any) => {
+    if (active && payload && payload.length) {
+      const unit = displayMode === 'cost' ? 'Ft' : '';
+      if (displayMode === 'usage') {
+        const total = payload.reduce((sum: number, entry: any) => sum + (Number(entry.value) || 0), 0);
+        return (
+          <div className="custom-tooltip-box">
+            <p className="tooltip-title">{label}</p>
+            {payload.map((entry: any, index: number) => (
+              <div key={index} className="tooltip-row">
+                <span style={{ color: entry.color }}>{entry.name}:</span>
+                <span className="tooltip-val">{Number(entry.value).toLocaleString()} {unit}</span>
+              </div>
+            ))}
+            <div className="tooltip-total font-emerald">
+              <span>Összesen:</span><span>{total.toLocaleString()} {unit}</span>
+            </div>
+          </div>
+        );
+      }
 
-  // --- REKORD MENTÉSE ---
+      const expenses = payload.filter((p: any) => !p.dataKey.endsWith('_income'));
+      const incomes = payload.filter((p: any) => p.dataKey.endsWith('_income'));
+      const totalExp = expenses.reduce((sum: number, p: any) => sum + Number(p.value), 0);
+      const totalInc = incomes.reduce((sum: number, p: any) => sum + Number(p.value), 0);
+      const netTotal = totalInc - totalExp;
+
+      return (
+        <div className="custom-tooltip-box">
+          <p className="tooltip-title">{label}</p>
+          {incomes.length > 0 && (
+            <div className="tooltip-section">
+              <div className="section-badge badge-income">Bevételek</div>
+              {incomes.map((entry: any, index: number) => (
+                <div key={`inc-${index}`} className="tooltip-row">
+                  <span style={{ color: entry.color }}>{entry.name.replace(' (Bevétel)', '')}:</span>
+                  <span className="font-emerald">+{Number(entry.value).toLocaleString()} {unit}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {expenses.length > 0 && (
+            <div className="tooltip-section">
+              <div className="section-badge badge-expense">Kiadások</div>
+              {expenses.map((entry: any, index: number) => (
+                <div key={`exp-${index}`} className="tooltip-row">
+                  <span style={{ color: entry.color }}>{entry.name}:</span>
+                  <span>{Number(entry.value).toLocaleString()} {unit}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          
+          <div className="tooltip-footer">
+            {totalExp > 0 && <div className="tooltip-row font-rose"><span>Össz. Kiadás:</span><span>-{totalExp.toLocaleString()} {unit}</span></div>}
+            {totalInc > 0 && <div className="tooltip-row font-emerald"><span>Össz. Bevétel:</span><span>+{totalInc.toLocaleString()} {unit}</span></div>}
+            <div className="tooltip-net" style={{ color: netTotal > 0 ? '#10b981' : (netTotal < 0 ? '#ef4444' : '#0f172a') }}>
+              <span>Egyenleg:</span><span>{netTotal > 0 ? '+' : ''}{netTotal.toLocaleString()} {unit}</span>
+            </div>
+          </div>
+        </div>
+      );
+    }
+    return null;
+  };
+
+  // --- FUNKCIÓK RÖGZÍTÉSE ---
   const handleSave = async () => {
     if (!targetAssetId || targetAssetId === 'all' || !value) return alert("Hiányzó adatok!");
     const currentCat = categories.find(c => c.Name === type);
@@ -322,30 +401,54 @@ function App() {
 
   const getIcon = (t: string) => {
     if (t === 'Összes') return '📊'; if (t === 'Összes kiadás') return '📉';
-    return categories.find(c => c.Name === t)?.Icon || '📄';
+    const cat = categories.find(c => c.Name === t);
+    return cat ? cat.Icon : '📄';
   };
 
   const getColor = (t: string = filter) => {
     if (displayMode === 'cost' && t !== 'Összes' && t !== 'Összes kiadás') return '#10b981';
     if (t === 'Összes') return '#4f46e5'; if (t === 'Összes kiadás') return '#ef4444';
-    return '#64748b';
+    switch(t) {
+      case 'Áram': return '#f59e0b';
+      case 'Víz': return '#06b6d4';
+      case 'Gáz': return '#f97316';
+      case 'Üzemanyag': return '#8b5cf6';
+      case 'Internet': return '#ec4899';
+      case 'Szemétszállítás': return '#64748b';
+      case 'Albérlet': return '#db2777';
+      default: 
+        let hash = 0;
+        for (let i = 0; i < t.length; i++) hash = t.charCodeAt(i) + ((hash << 5) - hash);
+        return `hsl(${hash % 360}, 65%, 55%)`;
+    }
   };
 
-  const combinedList = [
-    ...(filter === 'Összes' || filter === 'Összes kiadás' ? [] : records.filter(r => (selectedAssetId === 'all' || String(r.AssetId) === String(selectedAssetId)) && r.Type === filter).map(r => ({ ...r, lType: 'meter', d: r.FormattedDate }))),
-    ...invoices.filter(i => {
-      if (selectedAssetId !== 'all' && String(i.AssetId) !== String(selectedAssetId)) return false;
-      if (filter === 'Összes') return true;
-      if (filter === 'Összes kiadás') return categories.find(c => c.Name === i.Type)?.Type !== 'income';
-      return i.Type === filter;
-    }).map(i => ({ ...i, lType: 'invoice', Value: i.Amount, d: i.Month }))
-  ].sort((a, b) => new Date(b.d).getTime() - new Date(a.d).getTime());
+  const handleEditRecord = (item: any) => {
+    setEditingRecordId(item.Id || item.id);
+    setEditingRecordLType(item.lType);
+    setRecordMode(item.lType);
+    setTargetAssetId(String(item.AssetId));
+    setType(item.Type);
+    setValue(String(item.Value || item.Amount || ''));
+    
+    const dateStr = String(item.d).substring(0, 10);
+    if (item.lType === 'meter') setMeterDate(dateStr);
+    else setInvoiceDate(dateStr);
+    setActiveTab('dashboard');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const cancelRecordEdit = () => {
+    setEditingRecordId(null);
+    setEditingRecordLType(null);
+    setValue('');
+  };
 
   return (
     <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
       <div className="app-container">
         
-        {/* --- HEADER --- */}
+        {/* --- HEADER SÁV --- */}
         <header className="app-header">
           <div className="header-brand-section">
             <span className="brand-icon">⚡</span>
@@ -375,44 +478,49 @@ function App() {
             {activeTab === 'dashboard' && (
               <div className="dashboard-layout-grid">
                 
-                {/* BAL OLDALSÁV: ÚJ ADATOK */}
+                {/* BAL OLDALSÁV */}
                 <aside className="sidebar-container">
                   <div className="ui-widget-card">
                     <label className="input-label-flat">Eszköz gyorsválasztó</label>
                     <select className="form-control-select" value={selectedAssetId} onChange={(e) => setSelectedAssetId(e.target.value)}>
                       <option value="all">🌐 Összesített nézet</option>
                       {assets.map((a: any) => (
-                        <option key={a.Id} value={a.Id}>{a.Category === 'car' ? '🚗' : a.Category === 'person' ? '👤' : '🏠'} {a.FriendlyName}</option>
+                        <option key={a.Id} value={String(a.Id)}>{a.Category === 'car' ? '🚗' : a.Category === 'person' ? '👤' : '🏠'} {a.FriendlyName}</option>
                       ))}
                     </select>
                   </div>
 
                   {!isReadOnly && (
                     <div className="ui-widget-card">
-                      <h3 className="card-heading-clean">Új adat hozzáadása</h3>
+                      <h3 className="card-heading-clean">{editingRecordId ? "✏️ Tranzakció szerkesztése" : "Új adat hozzáadása"}</h3>
                       <div className="mode-toggle-pill">
-                        <button className={`pill-item ${recordMode === 'meter' ? 'active' : ''}`} onClick={() => setRecordMode('meter')}>📟 Óraállás</button>
-                        <button className={`pill-item ${recordMode === 'invoice' ? 'active' : ''}`} onClick={() => setRecordMode('invoice')}>💰 Számla</button>
+                        <button className={`pill-item ${recordMode === 'meter' ? 'active' : ''}`} onClick={() => setRecordMode('meter')} disabled={editingRecordId !== null}>📟 Óraállás</button>
+                        <button className={`pill-item ${recordMode === 'invoice' ? 'active' : ''}`} onClick={() => setRecordMode('invoice')} disabled={editingRecordId !== null}>💰 Számla</button>
                       </div>
                       <div className="form-stack-vertical">
                         <select className="form-control-select" value={targetAssetId} onChange={(e) => setTargetAssetId(e.target.value)}>
                           <option value="">Eszköz választás...</option>
-                          {assets.map((a: any) => (<option key={a.Id} value={a.Id}>{a.FriendlyName}</option>))}
+                          {assets.map((a: any) => (<option key={a.Id} value={String(a.Id)}>{a.FriendlyName}</option>))}
                         </select>
                         <select className="form-control-select" value={type} onChange={(e) => setType(e.target.value)}>
                           {getAllowedTypes(targetAssetId).map(t => <option key={t} value={t}>{getIcon(t)} {t}</option>)}
                         </select>
                         <input className="form-control-select" type="date" value={recordMode === 'meter' ? meterDate : invoiceDate} onChange={(e) => recordMode === 'meter' ? setMeterDate(e.target.value) : setInvoiceDate(e.target.value)} />
                         <input className="form-control-select" type="number" value={value} onChange={(e) => setValue(e.target.value)} placeholder="Érték (egység / Ft)" />
-                        <button className="btn-submit-form" onClick={handleSave}>Adat mentése</button>
+                        
+                        <div className="action-buttons-row">
+                          <button className="btn-submit-form" onClick={handleSave} disabled={!targetAssetId || targetAssetId === 'all' || !value}>
+                            {editingRecordId ? 'Módosítás mentése' : 'Adat mentése'}
+                          </button>
+                          {editingRecordId && <button className="btn-action-primary" style={{backgroundColor: '#64748b'}} onClick={cancelRecordEdit}>Mégse</button>}
+                        </div>
                       </div>
                     </div>
                   )}
                 </aside>
 
-                {/* JOBB OLDAL: DINAMIKUS CHIPEK ÉS GRAFIKON */}
+                {/* JOBB OLDAL */}
                 <section className="main-viewport-pane">
-                  
                   <div className="ui-widget-card">
                     <div className="grid-wrapping-chips">
                       <button className={`grid-chip-item ${filter === 'Összes' ? 'active' : ''}`} onClick={() => setFilter('Összes')} style={filter === 'Összes' ? {backgroundColor: getColor('Összes'), color:'white'} : {}}>📊 Összesen</button>
@@ -424,11 +532,10 @@ function App() {
                       ))}
                     </div>
 
-                    {/* SZŰRŐSÁV DESIGNOS MEZŐKKEL */}
                     <div className="chart-filter-controls-row">
                       <div className="controls-left-side-modes">
                         <div className="compact-btn-group">
-                          <button className={displayMode === 'usage' ? 'active' : ''} onClick={() => setDisplayMode('usage')}>Fogyasztás</button>
+                          <button className={displayMode === 'usage' ? 'active' : ''} disabled={filter === 'Összes' || filter === 'Összes kiadás'} onClick={() => setDisplayMode('usage')}>Fogyasztás</button>
                           <button className={displayMode === 'cost' ? 'active' : ''} onClick={() => setDisplayMode('cost')}>Költség</button>
                         </div>
                         <div className="compact-btn-group">
@@ -477,29 +584,28 @@ function App() {
               </div>
             )}
 
-            {/* ================= TAB 2: TRANZAKCIÓK KERESŐVEL ================= */}
+            {/* ================= TAB 2: TRANZAKCIÓK KERESŐVEL ÉS SZŰRŐKKEL ================= */}
             {activeTab === 'transactions' && (
               <div className="fullwidth-list-view">
                 <div className="list-title-header-row">
                   <h3>Tranzakciók keresése és kezelése</h3>
                 </div>
 
-                {/* ÚJ INTELLIGENS KERESŐSÁV */}
                 <div className="ui-widget-card search-filter-card-wrapper">
                   <div className="search-filter-grid-layout">
                     <input 
                       type="text" 
-                      placeholder="🔍 Keresés típusra, eszközre vagy összegre..." 
+                      placeholder="🔍 Keresés típusra, eszközre vagy értékre..." 
                       value={txSearch} 
                       onChange={(e) => setTxSearch(e.target.value)} 
                       className="form-control-select"
                     />
                     <select value={txAssetFilter} onChange={(e) => setTxAssetFilter(e.target.value)} className="form-control-select">
-                      <option value="all">Minden eszköz</option>
+                      <option value="all">Minden eszköz szűrése</option>
                       {assets.map((a: any) => (<option key={a.Id} value={String(a.Id)}>{a.FriendlyName}</option>))}
                     </select>
                     <select value={txCategoryFilter} onChange={(e) => setTxCategoryFilter(e.target.value)} className="form-control-select">
-                      <option value="all">Minden kategória</option>
+                      <option value="all">Minden kategória szűrése</option>
                       {categories.map((c: any) => (<option key={c.Id} value={c.Name}>{c.Icon} {c.Name}</option>))}
                     </select>
                   </div>
@@ -530,7 +636,7 @@ function App() {
                       </div>
                     );
                   })}
-                  {filteredCombinedList.length === 0 && <div className="empty-state-text">Nincs a szűrésnek megfelelő tranzakció.</div>}
+                  {filteredCombinedList.length === 0 && <div className="empty-state-text">Nincs a szűrésnek megfelelő tranzakció az adatbázisban.</div>}
                 </div>
               </div>
             )}
@@ -631,7 +737,7 @@ function App() {
           </div>
         )}
 
-        {/* --- APPS MODERN LIGHT-THEME ENGINE --- */}
+        {/* --- PREMIUM LIGHT-THEME STYLING ENGINE --- */}
         <style>{`
           :root {
             --bg-main: #f8fafc;
@@ -661,7 +767,6 @@ function App() {
             box-sizing: border-box;
           }
 
-          /* --- APP HEADERS --- */
           .app-header {
             background: var(--bg-card);
             border: 1px solid var(--border);
@@ -693,7 +798,6 @@ function App() {
           .user-round-avatar { width: 36px; height: 36px; border-radius: 50%; border: 2px solid #c7d2fe; }
           .logout-trigger-btn { background: transparent; border: none; cursor: pointer; font-size: 1.2rem; }
 
-          /* --- LAYOUT GRID --- */
           .dashboard-layout-grid {
             display: grid;
             grid-template-columns: 1fr;
@@ -706,7 +810,6 @@ function App() {
           .sidebar-container { display: flex; flex-direction: column; gap: 20px; }
           .main-viewport-pane { min-width: 0; display: flex; flex-direction: column; gap: 20px; }
 
-          /* --- CARDS & WIDGETS --- */
           .ui-widget-card {
             background: var(--bg-card); border-radius: 16px; padding: 20px;
             border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.01);
@@ -714,8 +817,8 @@ function App() {
           .card-heading-clean { margin: 0 0 16px 0; font-size: 1rem; font-weight: 700; }
           .input-label-flat { font-size: 0.8rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; margin-bottom: 8px; display: block; }
 
-          /* --- PREMIUM DROPDOWNS (ANTI-90S STYLING ENGINE) --- */
-          .form-control-select {
+          /* --- ANTI-90S PREMIUM INPUTS & DROPDOWNS ENGINE --- */
+          .form-control-select, .vertical-form input {
             width: 100%; padding: 11px 14px; background: #ffffff; border: 1px solid var(--border);
             border-radius: 10px; color: var(--text-main); font-size: 15px !important; box-sizing: border-box;
             outline: none; height: 46px; transition: all 0.2s ease-in-out;
@@ -727,40 +830,41 @@ function App() {
             background-repeat: no-repeat; background-position: right 14px center; background-size: 15px;
             padding-right: 40px !important; cursor: pointer;
           }
-          .form-control-select:focus {
+          .form-control-select:focus, .vertical-form input:focus {
             border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.08); background-color: #ffffff;
           }
           .form-stack-vertical { display: flex; flex-direction: column; gap: 12px; }
+          .action-buttons-row { display: flex; gap: 8px; }
 
           .mode-toggle-pill { display: flex; background: #f1f5f9; padding: 4px; border-radius: 10px; gap: 4px; margin-bottom: 4px; }
           .pill-item { flex: 1; background: transparent; border: none; padding: 8px; font-size: 0.85rem; font-weight: 600; color: var(--text-muted); cursor: pointer; border-radius: 8px; }
           .pill-item.active { background: white; color: var(--text-main); box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+          .pill-item:disabled { opacity: 0.5; cursor: not-allowed; }
 
           .btn-submit-form, .btn-action-primary {
             background: var(--emerald); color: white; border: none; padding: 12px; border-radius: 10px;
-            font-weight: 700; font-size: 0.95rem; cursor: pointer; height: 46px; transition: opacity 0.2s;
+            font-weight: 700; font-size: 0.95rem; cursor: pointer; height: 46px; transition: opacity 0.2s; text-align: center; width: 100%;
           }
           .btn-action-primary { background: var(--accent); }
-          .btn-submit-form:disabled { opacity: 0.4; }
+          .btn-submit-form:disabled { opacity: 0.4; cursor: not-allowed; }
 
           .flex-input-group { display: flex; gap: 8px; }
           .btn-add-plus { background: var(--accent); border: none; color: white; width: 46px; height: 46px; border-radius: 10px; font-size: 1.2rem; cursor: pointer; }
 
-          /* --- CHIPS WRAPPING GRID --- */
-          .grid-wrapping-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+          .grid-wrapping-chips { display: flex; flex-wrap: wrap; gap: 6px; }
           .grid-chip-item {
             background: #f1f5f9; border: 1px solid var(--border); color: var(--text-main);
-            padding: 10px 14px; border-radius: 12px; font-size: 0.85rem; font-weight: 600; cursor: pointer;
+            padding: 8px 12px; border-radius: 8px; font-size: 0.85rem; font-weight: 600; cursor: pointer;
             display: inline-flex; align-items: center; gap: 6px; transition: all 0.2s;
           }
           .grid-chip-item:hover { background: #e2e8f0; }
 
-          /* --- CONTROLS BAR & CUSTOM DATE RANGE --- */
           .chart-filter-controls-row { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-top: 10px; padding-top: 12px; border-top: 1px solid var(--border); }
           .controls-left-side-modes { display: flex; gap: 8px; }
           .controls-right-side-dates { display: flex; align-items: center; gap: 8px; }
           .compact-btn-group { display: flex; background: #f1f5f9; padding: 3px; border-radius: 20px; border: 1px solid var(--border); }
           .compact-btn-group button { background: transparent; border: none; color: var(--text-muted); padding: 5px 12px; border-radius: 20px; font-size: 0.75rem; font-weight: 700; cursor: pointer; }
+          .compact-btn-group button:disabled { opacity: 0.4; cursor: not-allowed; }
           .compact-btn-group button.active { background: white; color: var(--text-main); box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
           
           .styled-range-select { height: 36px; padding: 4px 32px 4px 14px; font-size: 0.8rem !important; border-radius: 20px; width: auto; background-position: right 10px center; }
@@ -768,12 +872,12 @@ function App() {
           .small-date-input { background: transparent; border: none; font-size: 0.8rem; outline: none; color: var(--text-main); cursor: pointer; font-family: inherit; }
           .date-separator { color: var(--text-muted); font-size: 0.8rem; }
 
-          /* ================= TRANZAKCIÓK KERESŐ SÁV ================= */
+          /* ================= TRANZAKCIÓK ENGINE ================= */
           .search-filter-card-wrapper { margin-bottom: 16px; padding: 14px !important; }
           .search-filter-grid-layout { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 12px; }
           @media (max-width: 768px) { .search-filter-grid-layout { grid-template-columns: 1fr; } }
 
-          /* ================= BEÁLLÍTÁSOK & MÁTRIX ================= */
+          /* ================= BEÁLLÍTÁSOK MATRIX ================= */
           .settings-split-dashboard { display: grid; grid-template-columns: 1fr; gap: 20px; text-align: left; }
           @media (min-width: 768px) { .settings-split-dashboard { grid-template-columns: 1fr 1fr; } }
           .grid-span-full { grid-column: 1 / -1; }
@@ -796,7 +900,7 @@ function App() {
           .tile-icon { font-size: 1.1rem; }
           .tile-name { font-size: 0.85rem; }
 
-          /* --- DATA TABLES --- */
+          /* --- TABLES --- */
           .fullwidth-list-view { text-align: left; }
           .modern-data-table-stack { display: flex; flex-direction: column; gap: 6px; }
           .table-row-card { background: white; border: 1px solid var(--border); border-radius: 10px; padding: 10px 16px; display: flex; justify-content: space-between; align-items: center; }
@@ -811,7 +915,6 @@ function App() {
           .row-buttons-trigger button { background: #f1f5f9; border: 1px solid var(--border); padding: 4px 8px; border-radius: 6px; cursor: pointer; margin-left: 4px; }
           .empty-state-text { text-align: center; padding: 20px; color: var(--text-muted); font-size: 0.9rem; }
 
-          /* --- MISC --- */
           .share-list-row-item { display: flex; justify-content: space-between; padding: 8px; background: #f8fafc; border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem; }
           .flat-delete-btn { background: transparent; border: none; color: var(--rose); cursor: pointer; }
           .custom-tooltip-box { background: white; padding: 10px; border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 10px rgba(0,0,0,0.06); font-size: 12px; }
