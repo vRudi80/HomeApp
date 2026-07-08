@@ -23,6 +23,12 @@ function App() {
   const [viewingUserId, setViewingUserId] = useState<string | null>(null);
   const [selectedAssetId, setSelectedAssetId] = useState<string>('all');
   
+  // Navigációs állapot (dashboard / transactions / settings)
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'transactions' | 'settings'>('dashboard');
+  
+  // Kijelölt eszköz a beállítások menüpont alatti mátrixhoz
+  const [matrixSelectedAssetId, setMatrixSelectedAssetId] = useState<string>('');
+
   const [recordMode, setRecordMode] = useState<'meter' | 'invoice'>('meter');
   const [targetAssetId, setTargetAssetId] = useState('');
   const [type, setType] = useState('');
@@ -30,8 +36,6 @@ function App() {
   const [meterDate, setMeterDate] = useState(new Date().toISOString().split('T')[0]);
   const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().split('T')[0]);
 
-  const [showAssetManager, setShowAssetManager] = useState(false);
-  const [showCategoryManager, setShowCategoryManager] = useState(false);
   const [editingAssetId, setEditingAssetId] = useState<number | null>(null);
   const [editingCategoryId, setEditingCategoryId] = useState<number | null>(null);
   const [shareEmail, setShareEmail] = useState('');
@@ -53,58 +57,49 @@ function App() {
   const [customStartDate, setCustomStartDate] = useState<string>('2024-01');
   const [customEndDate, setCustomEndDate] = useState<string>(new Date().toISOString().substring(0, 7));
 
-  // Az eszköz-kategória hozzárendeléseket tároló állapot
   const [assetCategoryMap, setAssetCategoryMap] = useState<{ [key: string]: string[] }>({});
 
   const isAdmin = user && ADMIN_EMAILS.includes(user.email);
   const isReadOnly = viewingUserId !== null && viewingUserId !== user?.sub;
 
-  // --- API MŰVELETEK ---
+  // Automatikusan kijelöli az első eszközt a mátrixhoz, ha betöltődtek az eszközök
+  useEffect(() => {
+    if (assets.length > 0 && !matrixSelectedAssetId) {
+      setMatrixSelectedAssetId(String(assets[0].Id));
+    }
+  }, [assets]);
+
+  // --- API KAPCSOLATOK ---
   const handleToggleCategoryForAsset = async (assetId: string, categoryName: string) => {
     if (isReadOnly) return;
     try {
       const res = await fetch(`${BACKEND_URL}/api/asset-categories/toggle`, {
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${user.token}`
-        },
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${user.token}` },
         body: JSON.stringify({ assetId: parseInt(assetId), categoryName })
       });
       if (res.ok) {
         const currentAllowed = assetCategoryMap[assetId] || [];
-        let updated: string[];
-        if (currentAllowed.includes(categoryName)) {
-          updated = currentAllowed.filter(c => c !== categoryName);
-        } else {
-          updated = [...currentAllowed, categoryName];
-        }
+        const updated = currentAllowed.includes(categoryName)
+          ? currentAllowed.filter(c => c !== categoryName)
+          : [...currentAllowed, categoryName];
         setAssetCategoryMap({ ...assetCategoryMap, [assetId]: updated });
-      } else {
-        alert("Nem sikerült menteni a beállítást az adatbázisba.");
       }
-    } catch (e) {
-      console.error(e);
-      alert("Hálózati hiba a mentés során.");
-    }
+    } catch (e) { console.error(e); }
   };
 
   const fetchMyShares = async (token: string) => {
     try {
-      const res = await fetch(`${BACKEND_URL}/api/shares/owned`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
+      const res = await fetch(`${BACKEND_URL}/api/shares/owned`, { headers: { 'Authorization': `Bearer ${token}` } });
       if (res.ok) setMyShares(await res.json());
-    } catch (e) { console.error("Hiba a megosztások betöltésekor", e); }
+    } catch (e) { console.error(e); }
   };
 
   const fetchSharedAccounts = async (token: string) => {
     try {
-      const res = await fetch(`${BACKEND_URL}/api/shares/me`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
+      const res = await fetch(`${BACKEND_URL}/api/shares/me`, { headers: { 'Authorization': `Bearer ${token}` } });
       if (res.ok) setSharedUsers(await res.json());
-    } catch (e) { console.error("Hiba a megosztások lekérésekor", e); }
+    } catch (e) { console.error(e); }
   };
 
   const fetchAll = async (token: string, targetId?: string) => {
@@ -130,14 +125,8 @@ function App() {
       setRecords(Array.isArray(recData) ? recData : []);
       setInvoices(Array.isArray(invData) ? invData : []);
       setAssets(Array.isArray(astData) ? astData : []);
-      
-      const loadedCategories = Array.isArray(catData) ? catData : [];
-      setCategories(loadedCategories);
-      if (loadedCategories.length > 0 && !type) {
-        setType(loadedCategories[0].Name);
-      }
+      setCategories(Array.isArray(catData) ? catData : []);
 
-      // Adatbázis mátrix eredmény feldolgozása a felület számára
       if (Array.isArray(acData)) {
         const map: { [key: string]: string[] } = {};
         acData.forEach((row: any) => {
@@ -147,7 +136,7 @@ function App() {
         });
         setAssetCategoryMap(map);
       }
-    } catch (err) { console.error("Adatlekérési hiba", err); }
+    } catch (err) { console.error(err); }
   };
 
   const handleLoginSuccess = async (token: string) => {
@@ -165,18 +154,12 @@ function App() {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
       });
-    } catch (e) {
-      console.error("Hiba a bejelentkezésnél", e);
-      forceLogout();
-    }
+    } catch (e) { forceLogout(); }
   };
 
   const forceLogout = () => {
-    googleLogout();
-    setUser(null);
-    setRecords([]); setInvoices([]); setAssets([]); setCategories([]);
-    setSharedUsers([]); setMyShares([]);
-    localStorage.removeItem('userToken');
+    googleLogout(); setUser(null); setRecords([]); setInvoices([]); setAssets([]); 
+    setCategories([]); setSharedUsers([]); setMyShares([]); localStorage.removeItem('userToken');
   };
 
   useEffect(() => {
@@ -187,52 +170,21 @@ function App() {
   const getAllowedTypes = (assetId: string) => {
     const allCatNames = categories.map(c => c.Name);
     if (!assetId || assetId === 'all') return allCatNames;
-    
-    // Ha az adatbázisból jött egyedi mátrix beállítás az eszközhöz, azt használjuk
     if (assetCategoryMap[assetId] && assetCategoryMap[assetId].length > 0) {
       return assetCategoryMap[assetId];
     }
-
-    // Automatikus intelligens fallback, ha még üres az adatbázis mátrix
     const asset = assets.find((a: any) => String(a.Id) === String(assetId));
-    if (asset?.Category === 'car') {
-      return allCatNames.includes('Üzemanyag') ? ['Üzemanyag'] : allCatNames;
-    }
-    if (asset?.Category === 'person') {
-      return allCatNames.filter(name => ['Fizetés', 'Túrájós', 'Fotózás', 'Egyéb'].includes(name));
-    }
-    if (asset?.Category === 'property') {
-      return allCatNames.filter(name => !['Üzemanyag', 'Fizetés'].includes(name));
-    }
+    if (asset?.Category === 'car') return allCatNames.includes('Üzemanyag') ? ['Üzemanyag'] : allCatNames;
     return allCatNames;
   };
 
   useEffect(() => {
     if (selectedAssetId !== 'all') {
       if (!editingRecordId) setTargetAssetId(selectedAssetId);
-      const asset = assets.find(a => String(a.Id) === String(selectedAssetId));
-      if (asset?.Category === 'car') {
-        if (categories.find(c => c.Name === 'Üzemanyag')) setFilter('Üzemanyag');
-        setDisplayMode('cost');
-      }
     } else {
       setFilter('Összes');
-      setDisplayMode('cost');
     }
-  }, [selectedAssetId, assets.length, categories, editingRecordId]);
-
-  useEffect(() => {
-    const asset = assets.find(a => String(a.Id) === String(targetAssetId));
-    const allowed = getAllowedTypes(targetAssetId);
-    const currentCat = categories.find(c => c.Name === type);
-    
-    if (!editingRecordId) {
-      if (asset?.Category === 'car' || currentCat?.Type === 'invoice_only' || currentCat?.Type === 'income') {
-        setRecordMode('invoice');
-      }
-    }
-    if (allowed.length > 0 && !allowed.includes(type)) setType(allowed[0]);
-  }, [targetAssetId, type, assets, categories, assetCategoryMap]);
+  }, [selectedAssetId]);
 
   // --- GRAFIKON ADATOK ---
   const chartData = useMemo(() => {
@@ -242,10 +194,7 @@ function App() {
 
     if (displayMode === 'usage') {
       const assetsMap: { [key: string]: any[] } = {};
-      fRec.filter((r: any) => {
-        if (filter === 'Összes' || filter === 'Összes kiadás') return true;
-        return r.Type === filter;
-      }).forEach((r: any) => {
+      fRec.filter((r: any) => (filter === 'Összes' || filter === 'Összes kiadás' ? true : r.Type === filter)).forEach((r: any) => {
         if (!assetsMap[r.AssetId]) assetsMap[r.AssetId] = [];
         assetsMap[r.AssetId].push(r);
       });
@@ -255,12 +204,7 @@ function App() {
         for (let i = 1; i < filtered.length; i++) {
           const diff = parseFloat(filtered[i].Value) - parseFloat(filtered[i-1].Value);
           if (diff >= 0) {
-            const t1 = new Date(filtered[i-1].FormattedDate).getTime();
-            const t2 = new Date(filtered[i].FormattedDate).getTime();
-            const midDate = new Date(t1 + (t2 - t1) / 2);
-            const year = midDate.getFullYear();
-            const month = String(midDate.getMonth() + 1).padStart(2, '0');
-            const key = viewMode === 'monthly' ? `${year}-${month}` : `${year}`;
+            const key = viewMode === 'monthly' ? filtered[i].FormattedDate.substring(0, 7) : filtered[i].FormattedDate.substring(0, 4);
             const asset = assets.find(a => String(a.Id) === String(assetId));
             const label = asset ? asset.FriendlyName : 'Egyéb';
             if (!dataMap[key]) dataMap[key] = { label: key };
@@ -272,273 +216,76 @@ function App() {
       const keyLen = viewMode === 'monthly' ? 7 : 4;
       fInv.filter((inv: any) => {
         if (filter === 'Összes') return true;
-        if (filter === 'Összes kiadás') {
-          const isInc = categories.find(c => c.Name === inv.Type)?.Type === 'income';
-          return !isInc;
-        }
+        if (filter === 'Összes kiadás') return categories.find(c => c.Name === inv.Type)?.Type !== 'income';
         return inv.Type === filter;
       }).forEach((inv: any) => {
         const key = String(inv.Month || "").substring(0, keyLen);
         const asset = assets.find(a => String(a.Id) === String(inv.AssetId));
         const label = asset ? asset.FriendlyName : 'Egyéb';
         const isIncome = categories.find(c => c.Name === inv.Type)?.Type === 'income';
-        const amount = parseFloat(inv.Amount || 0);
-
         if (key && key.length >= 4) {
           if (!dataMap[key]) dataMap[key] = { label: key };
           if (isIncome) {
-            const incomeKey = `${label}_income`;
-            dataMap[key][incomeKey] = (dataMap[key][incomeKey] || 0) + amount;
+            dataMap[key][`${label}_income`] = (dataMap[key][`${label}_income`] || 0) + parseFloat(inv.Amount || 0);
           } else {
-            dataMap[key][label] = (dataMap[key][label] || 0) + amount;
+            dataMap[key][label] = (dataMap[key][label] || 0) + parseFloat(inv.Amount || 0);
           }
         }
       });
     }
-    
-    const sortedData = Object.values(dataMap).sort((a: any, b: any) => a.label.localeCompare(b.label));
-    if (chartRange === 'custom') {
-      return sortedData.filter((item: any) => {
-        const itemDate = item.label; 
-        const start = viewMode === 'annual' ? customStartDate.substring(0, 4) : customStartDate;
-        const end = viewMode === 'annual' ? customEndDate.substring(0, 4) : customEndDate;
-        return itemDate >= (start || '0000') && itemDate <= (end || '9999');
-      });
-    }
+    const sorted = Object.values(dataMap).sort((a: any, b: any) => a.label.localeCompare(b.label));
+    return chartRange === 'custom' ? sorted : (chartRange === 'all' ? sorted : sorted.slice(-chartRange));
+  }, [records, invoices, assets, filter, displayMode, viewMode, selectedAssetId, chartRange]);
 
-    if (viewMode === 'monthly' && chartRange !== 'all') {
-      return sortedData.slice(-chartRange as number);
-    }
-    return sortedData;
-  }, [records, invoices, assets, filter, displayMode, viewMode, selectedAssetId, categories, chartRange, customStartDate, customEndDate]);
-
-  const CustomTooltip = ({ active, payload, label }: any) => {
-    if (active && payload && payload.length) {
-      const unit = displayMode === 'cost' ? 'Ft' : '';
-      if (displayMode === 'usage') {
-        const total = payload.reduce((sum: number, entry: any) => sum + (Number(entry.value) || 0), 0);
-        return (
-          <div className="custom-tooltip-box">
-            <p className="tooltip-title">{label}</p>
-            {payload.map((entry: any, index: number) => (
-              <div key={index} className="tooltip-row">
-                <span style={{ color: entry.color }}>{entry.name}:</span>
-                <span className="tooltip-val">{Number(entry.value).toLocaleString()} {unit}</span>
-              </div>
-            ))}
-            <div className="tooltip-total font-emerald">
-              <span>Összesen:</span><span>{total.toLocaleString()} {unit}</span>
-            </div>
-          </div>
-        );
-      }
-
-      const expenses = payload.filter((p: any) => !p.dataKey.endsWith('_income'));
-      const incomes = payload.filter((p: any) => p.dataKey.endsWith('_income'));
-      const totalExp = expenses.reduce((sum: number, p: any) => sum + Number(p.value), 0);
-      const totalInc = incomes.reduce((sum: number, p: any) => sum + Number(p.value), 0);
-      const netTotal = totalInc - totalExp;
-
-      return (
-        <div className="custom-tooltip-box">
-          <p className="tooltip-title">{label}</p>
-          {incomes.length > 0 && (
-            <div className="tooltip-section">
-              <div className="section-badge badge-income">Bevételek</div>
-              {incomes.map((entry: any, index: number) => (
-                <div key={`inc-${index}`} className="tooltip-row">
-                  <span style={{ color: entry.color }}>{entry.name.replace(' (Bevétel)', '')}:</span>
-                  <span className="font-emerald">+{Number(entry.value).toLocaleString()} {unit}</span>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {expenses.length > 0 && (
-            <div className="tooltip-section">
-              <div className="section-badge badge-expense">Kiadások</div>
-              {expenses.map((entry: any, index: number) => (
-                <div key={`exp-${index}`} className="tooltip-row">
-                  <span style={{ color: entry.color }}>{entry.name}:</span>
-                  <span>{Number(entry.value).toLocaleString()} {unit}</span>
-                </div>
-              ))}
-            </div>
-          )}
-          
-          <div className="tooltip-footer">
-            {totalExp > 0 && (
-              <div className="tooltip-row font-rose">
-                <span>Össz. Kiadás:</span><span>-{totalExp.toLocaleString()} {unit}</span>
-              </div>
-            )}
-            {totalInc > 0 && (
-              <div className="tooltip-row font-emerald">
-                <span>Össz. Bevétel:</span><span>+{totalInc.toLocaleString()} {unit}</span>
-              </div>
-            )}
-            <div className="tooltip-net" style={{ color: netTotal > 0 ? '#10b981' : (netTotal < 0 ? '#ef4444' : '#0f172a') }}>
-              <span>Egyenleg:</span>
-              <span>{netTotal > 0 ? '+' : ''}{netTotal.toLocaleString()} {unit}</span>
-            </div>
-          </div>
-        </div>
-      );
-    }
-    return null;
-  };
-
-  const handleAssetSave = async () => {
-    if (!newAsset.friendlyName) return alert("Adj nevet az eszköznek!");
-    const method = editingAssetId ? 'PUT' : 'POST';
-    const url = editingAssetId ? `${BACKEND_URL}/api/assets/${editingAssetId}` : `${BACKEND_URL}/api/assets`;
-    try {
-      const res = await fetch(url, {
-        method, 
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${user.token}` },
-        body: JSON.stringify(newAsset)
-      });
-      if (res.ok) {
-        setEditingAssetId(null);
-        setNewAsset({ category: 'property', friendlyName: '', city: '', street: '', houseNumber: '', plateNumber: '', fuelType: 'Benzin', area: '' });
-        setShowAssetManager(false);
-        fetchAll(user.token);
-      } else { alert("Hiba történt."); }
-    } catch (error) { alert("Hálózati hiba!"); }
-  };
-
-  const handleCategorySave = async () => {
-    if (!newCategory.name) return;
-    const url = editingCategoryId ? `${BACKEND_URL}/api/categories/${editingCategoryId}` : `${BACKEND_URL}/api/categories`;
-    const res = await fetch(url, {
-      method: editingCategoryId ? 'PUT' : 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${user.token}` },
-      body: JSON.stringify(newCategory)
-    });
-    if (res.ok) {
-      setEditingCategoryId(null);
-      setNewCategory({ name: '', icon: '📄', type: 'both', isPublic: false });
-      fetchAll(user.token);
-    } else {
-      const data = await res.json();
-      alert(data.error || "Hiba történt");
-    }
-  };
-
-  const handleCategoryDelete = async (id: number) => {
-    if (!window.confirm("Biztosan törlöd a kategóriát?")) return;
-    const res = await fetch(`${BACKEND_URL}/api/categories/${id}`, {
-      method: 'DELETE', headers: { 'Authorization': `Bearer ${user.token}` }
-    });
-    if (res.ok) fetchAll(user.token);
-    else {
-      const data = await res.json();
-      alert(data.error || "Hiba történt");
-    }
-  };
-
-  const handleEditRecord = (item: any) => {
-    setEditingRecordId(item.Id || item.id);
-    setEditingRecordLType(item.lType);
-    setRecordMode(item.lType);
-    setTargetAssetId(String(item.AssetId));
-    setType(item.Type);
-    setValue(String(item.Value || item.Amount || ''));
-    
-    const dateStr = String(item.d).substring(0, 10);
-    if (item.lType === 'meter') setMeterDate(dateStr);
-    else setInvoiceDate(dateStr);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
-
-  const cancelRecordEdit = () => {
-    setEditingRecordId(null);
-    setEditingRecordLType(null);
-    setValue('');
-  };
-
+  // --- REKORD MENTÉSE ---
   const handleSave = async () => {
-    if (!targetAssetId || targetAssetId === 'all') return alert("Kérlek, válassz ki egy konkrét eszközt!");
-    if (!value) return alert("Kérlek, add meg az értéket!");
-    
+    if (!targetAssetId || targetAssetId === 'all' || !value) return alert("Hiányzó adatok!");
     const currentCat = categories.find(c => c.Name === type);
-    const isInvoiceType = currentCat?.Type === 'invoice_only' || currentCat?.Type === 'income';
-    const body = { 
-      type, 
-      value: parseFloat(value), 
-      amount: parseFloat(value), 
-      date: (recordMode === 'invoice' || isInvoiceType) ? invoiceDate : meterDate, 
-      assetId: parseInt(targetAssetId) 
-    };
-    const isEditing = editingRecordId !== null;
-    const endpoint = isEditing 
-        ? `/api/${editingRecordLType === 'meter' ? 'records' : 'invoices'}/${editingRecordId}`
-        : ((recordMode === 'invoice' || isInvoiceType) ? '/api/invoices' : '/api/records');
-    const method = isEditing ? 'PUT' : 'POST';
-
+    const isInvoice = recordMode === 'invoice' || currentCat?.Type === 'invoice_only' || currentCat?.Type === 'income';
+    const body = { type, value: parseFloat(value), amount: parseFloat(value), date: isInvoice ? invoiceDate : meterDate, assetId: parseInt(targetAssetId) };
+    const endpoint = editingRecordId ? `/api/${editingRecordLType === 'meter' ? 'records' : 'invoices'}/${editingRecordId}` : (isInvoice ? '/api/invoices' : '/api/records');
+    
     const res = await fetch(`${BACKEND_URL}${endpoint}`, {
-      method: method,
+      method: editingRecordId ? 'PUT' : 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${user.token}` },
       body: JSON.stringify(body)
     });
-    if (res.ok) { 
-      setValue(''); 
-      setEditingRecordId(null);
-      setEditingRecordLType(null);
-      fetchAll(user.token, viewingUserId!);
-    } else { alert("Hiba történt a mentés során."); }
+    if (res.ok) { setValue(''); setEditingRecordId(null); fetchAll(user.token, viewingUserId!); }
+  };
+
+  const handleAssetSave = async () => {
+    if (!newAsset.friendlyName) return alert("Név kötelező!");
+    const res = await fetch(`${BACKEND_URL}/api/assets`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${user.token}` },
+      body: JSON.stringify(newAsset)
+    });
+    if (res.ok) { setNewAsset({ category: 'property', friendlyName: '', city: '', street: '', houseNumber: '', plateNumber: '', fuelType: 'Benzin', area: '' }); fetchAll(user.token); }
   };
 
   const handleShare = async () => {
-    if (!shareEmail) return alert("Kérlek adj meg egy email címet!");
+    if (!shareEmail) return;
     const res = await fetch(`${BACKEND_URL}/api/shares`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${user.token}` },
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${user.token}` },
       body: JSON.stringify({ sharedWithEmail: shareEmail })
     });
-    if (res.ok) { alert("Sikeres megosztás!"); setShareEmail(''); fetchMyShares(user.token); } 
-    else { alert("Hiba történt a megosztás során."); }
-  };
-
-  const revokeShare = async (id: number) => {
-    if (!window.confirm("Biztosan visszavonod a hozzáférést?")) return;
-    const res = await fetch(`${BACKEND_URL}/api/shares/${id}`, {
-      method: 'DELETE', headers: { 'Authorization': `Bearer ${user.token}` }
-    });
-    if (res.ok) fetchMyShares(user.token);
+    if (res.ok) { setShareEmail(''); fetchMyShares(user.token); }
   };
 
   const getIcon = (t: string) => {
-    if (t === 'Összes') return '📊';
-    if (t === 'Összes kiadás') return '📉';
-    const cat = categories.find(c => c.Name === t);
-    return cat ? cat.Icon : '📄';
+    if (t === 'Összes') return '📊'; if (t === 'Összes kiadás') return '📉';
+    return categories.find(c => c.Name === t)?.Icon || '📄';
   };
 
   const getColor = (t: string = filter) => {
     if (displayMode === 'cost' && t !== 'Összes' && t !== 'Összes kiadás') return '#10b981';
-    if (t === 'Összes') return '#4f46e5';
-    if (t === 'Összes kiadás') return '#ef4444';
-    switch(t) {
-      case 'Áram': return '#f59e0b';
-      case 'Víz': return '#06b6d4';
-      case 'Gáz': return '#f97316';
-      case 'Üzemanyag': return '#8b5cf6';
-      case 'Internet': return '#ec4899';
-      case 'Szemétszállítás': return '#64748b';
-      case 'Albérlet': return '#db2777';
-      default: 
-        let hash = 0;
-        for (let i = 0; i < t.length; i++) hash = t.charCodeAt(i) + ((hash << 5) - hash);
-        return `hsl(${hash % 360}, 65%, 55%)`;
-    }
+    if (t === 'Összes') return '#4f46e5'; if (t === 'Összes kiadás') return '#ef4444';
+    return '#64748b';
   };
 
   const combinedList = [
     ...(filter === 'Összes' || filter === 'Összes kiadás' ? [] : records.filter(r => (selectedAssetId === 'all' || String(r.AssetId) === String(selectedAssetId)) && r.Type === filter).map(r => ({ ...r, lType: 'meter', d: r.FormattedDate }))),
     ...invoices.filter(i => {
-      const isAssetMatch = selectedAssetId === 'all' || String(i.AssetId) === String(selectedAssetId);
-      if (!isAssetMatch) return false;
+      if (selectedAssetId !== 'all' && String(i.AssetId) !== String(selectedAssetId)) return false;
       if (filter === 'Összes') return true;
       if (filter === 'Összes kiadás') return categories.find(c => c.Name === i.Type)?.Type !== 'income';
       return i.Type === filter;
@@ -549,313 +296,145 @@ function App() {
     <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
       <div className="app-container">
         
-        {/* --- HEADER --- */}
+        {/* --- MODERNISELT APPS HEADER --- */}
         <header className="app-header">
-          <div className="header-top-row">
-            <div className="brand-logo">
-              <span className="logo-icon">⚡</span>
-              <h1>Rezsiapp <span className="version-tag">2.0</span></h1>
-            </div>
-            {user && (
-              <div className="user-profile-zone">
-                <div className="user-meta" title={user.email}>
-                  <img src={user.picture} alt="Avatar" className="user-avatar" />
-                </div>
-                <button className="btn-logout-icon" onClick={forceLogout} title="Kilépés">🚪</button>
-              </div>
-            )}
+          <div className="header-brand-section">
+            <span className="brand-icon">⚡</span>
+            <h2>Rezsiapp <span className="version-tag">2.0</span></h2>
           </div>
           
-          {user && !isReadOnly && (
-            <div className="header-actions-row">
-              <button className="nav-btn" onClick={() => { setShowCategoryManager(true); setShowAssetManager(false); }}>⚙️ Kategóriák</button>
-              <button className="nav-btn nav-btn-primary" onClick={() => { setShowAssetManager(true); setShowCategoryManager(false); }}>🏠 Eszközök</button>
+          {user && (
+            <nav className="header-navigation-tabs">
+              <button className={`nav-tab-link ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveTab('dashboard')}>📊 Műszerfal</button>
+              <button className={`nav-tab-link ${activeTab === 'transactions' ? 'active' : ''}`} onClick={() => setActiveTab('transactions')}>📜 Tranzakciók</button>
+              <button className={`nav-tab-link ${activeTab === 'settings' ? 'active' : ''}`} onClick={() => setActiveTab('settings')}>⚙️ Beállítások & Eszközök</button>
+            </nav>
+          )}
+
+          {user && (
+            <div className="header-user-badge">
+              <img src={user.picture} alt="Avatar" className="user-round-avatar" />
+              <button className="logout-trigger-btn" onClick={forceLogout} title="Kijelentkezés">🚪</button>
             </div>
           )}
         </header>
 
-        {/* --- MODAL: KATEGÓRIÁK --- */}
-        {showCategoryManager && (
-          <div className="modal-backdrop">
-            <div className="modal-content">
-              <div className="modal-header">
-                <h3>Kategóriák karbantartása</h3>
-                <button className="close-modal" onClick={() => setShowCategoryManager(false)}>×</button>
-              </div>
-              <div className="modal-form">
-                <input placeholder="Ikon" value={newCategory.icon} onChange={(e) => setNewCategory({...newCategory, icon: e.target.value})} style={{width: '70px'}}/>
-                <input placeholder="Kategória neve" value={newCategory.name} onChange={(e) => setNewCategory({...newCategory, name: e.target.value})} />
-                <select value={newCategory.type} onChange={(e) => setNewCategory({...newCategory, type: e.target.value})}>
-                  <option value="both">📟 Óraállás + 💰 Számla (Kiadás)</option>
-                  <option value="invoice_only">Csak 💰 Számla (Kiadás)</option>
-                  <option value="income">💵 Bevétel (Csak Számla)</option>
-                </select>
-                {isAdmin && (
-                  <label className="checkbox-label">
-                    <input type="checkbox" checked={newCategory.isPublic} onChange={(e) => setNewCategory({...newCategory, isPublic: e.target.checked})} />
-                    Publikus (Mindenki látja)
-                  </label>
-                )}
-                <button className="btn-save-action" onClick={handleCategorySave}>Mentés</button>
-              </div>
-              <div className="modal-list">
-                {categories.map((c: any) => (
-                  <div key={c.Id} className="list-item-row">
-                    <span>{c.Icon} {c.Name} {!c.UserId ? '🌐' : '🔒'}</span>
-                    {(!c.UserId || isAdmin) && (
-                      <div className="actions">
-                        <button className="action-inline-btn" onClick={() => { setEditingCategoryId(c.Id); setNewCategory({ name: c.Name, icon: c.Icon, type: c.Type, isPublic: !c.UserId }); }}>✏️</button>
-                        <button className="action-inline-btn delete" onClick={() => handleCategoryDelete(c.Id)}>❌</button>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* --- MODAL: ESZKÖZÖK + ADATBÁZIS MÁTRIX NÉZET --- */}
-        {showAssetManager && (
-          <div className="modal-backdrop">
-            <div className="modal-content text-left">
-              <div className="modal-header">
-                <h3>{editingAssetId ? "Módosítás" : "Eszközök & Tartozó típusok"}</h3>
-                <button className="close-modal" onClick={() => setShowAssetManager(false)}>×</button>
-              </div>
-              
-              <div className="modal-form">
-                <select value={newAsset.category} onChange={(e) => setNewAsset({...newAsset, category: e.target.value})}>
-                  <option value="property">🏠 Ingatlan</option>
-                  <option value="car">🚗 Jármű</option>
-                  <option value="person">👤 Személy</option>
-                </select>
-                <input placeholder="Megnevezés" value={newAsset.friendlyName} onChange={(e) => setNewAsset({...newAsset, friendlyName: e.target.value})} />
-                <button className="btn-save-action" onClick={handleAssetSave}>Új eszköz mentése</button>
-              </div>
-
-              <div className="matrix-title">Eszközök egyedi kategória rendelései (Adatbázis szűrő):</div>
-              <div className="modal-list scrollable-list">
-                {assets.map((a: any) => (
-                  <div key={a.Id} className="asset-matrix-card">
-                    <div className="asset-matrix-header">
-                      <strong>{a.Category === 'car' ? '🚗' : a.Category === 'person' ? '👤' : '🏠'} {a.FriendlyName}</strong>
-                      <span className="type-badge">{a.Category}</span>
-                    </div>
-                    
-                    <div className="matrix-checkbox-grid">
-                      {categories.map((c: any) => {
-                        const isAllowed = (assetCategoryMap[a.Id] || []).includes(c.Name);
-                        return (
-                          <label key={c.Id} className={`matrix-checkbox-item ${isAllowed ? 'checked' : ''}`}>
-                            <input 
-                              type="checkbox" 
-                              checked={isAllowed} 
-                              onChange={() => handleToggleCategoryForAsset(String(a.Id), c.Name)} 
-                            />
-                            <span>{c.Icon} {c.Name}</span>
-                          </label>
-                        );
-                      })}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* --- FŐ TARTALOM --- */}
         {user ? (
-          <div className="dashboard-grid">
+          <div className="main-content-router">
             
-            <aside className="dashboard-sidebar">
-              <div className="dashboard-card compact-card">
-                <div className="form-group">
-                  <label>Eszköz / Entitás kiválasztása</label>
-                  <select className="styled-select" value={selectedAssetId} onChange={(e) => setSelectedAssetId(e.target.value)}>
-                    <option value="all">🌐 Összesített nézet</option>
-                    {assets.map((a: any) => (
-                      <option key={a.Id} value={a.Id}>
-                        {a.Category === 'car' ? '🚗' : a.Category === 'person' ? '👤' : '🏠'} {a.FriendlyName}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {sharedUsers.length > 0 && (
-                  <div className="form-group mt-3">
-                    <label>Fiókváltás</label>
-                    <select className="styled-select selector-highlight" value={viewingUserId || user?.sub} onChange={(e) => { setViewingUserId(e.target.value); setSelectedAssetId('all'); fetchAll(user.token, e.target.value); }}>
-                      <option value={user?.sub}>Saját adataim</option>
-                      {sharedUsers.map(su => (
-                        <option key={su.owner_id} value={su.owner_id}>{su.owner_email}</option>
+            {/* ================= TAB 1: MŰSZERFAL ================= */}
+            {activeTab === 'dashboard' && (
+              <div className="dashboard-layout-grid">
+                
+                {/* BAL OLDALSÁV: ADATRÖGZÍTÉS */}
+                <aside className="sidebar-container">
+                  <div className="ui-widget-card">
+                    <label className="input-label-flat">Eszköz gyorsválasztó</label>
+                    <select className="form-control-select" value={selectedAssetId} onChange={(e) => setSelectedAssetId(e.target.value)}>
+                      <option value="all">🌐 Összesített nézet</option>
+                      {assets.map((a: any) => (
+                        <option key={a.Id} value={a.Id}>{a.Category === 'car' ? '🚗' : a.Category === 'person' ? '👤' : '🏠'} {a.FriendlyName}</option>
                       ))}
                     </select>
                   </div>
-                )}
-              </div>
 
-              {!isReadOnly && (
-                <div className="dashboard-card">
-                  <h3 className="card-title">Új Tranzakció / Érték</h3>
-                  {editingRecordId && <div className="edit-indicator">✏️ Módosítás folyamatban...</div>}
-                  
-                  <div className="tab-switcher">
-                    <button className={`tab-btn ${recordMode === 'meter' ? 'active' : ''}`} onClick={() => setRecordMode('meter')} disabled={editingRecordId !== null || assets.find(a => String(a.Id) === String(targetAssetId))?.Category === 'car' || categories.find(c => c.Name === type)?.Type === 'invoice_only' || categories.find(c => c.Name === type)?.Type === 'income'}>📟 Óraállás</button>
-                    <button className={`tab-btn ${recordMode === 'invoice' ? 'active' : ''}`} onClick={() => setRecordMode('invoice')} disabled={editingRecordId !== null}>💰 Számla</button>
-                  </div>
-
-                  <div className="vertical-form">
-                    <select value={targetAssetId} onChange={(e) => setTargetAssetId(e.target.value)}>
-                      <option value="">Válassz eszközt...</option>
-                      {assets.map((a: any) => (<option key={a.Id} value={a.Id}>{a.FriendlyName}</option>))}
-                    </select>
-                    
-                    <select value={type} onChange={(e) => setType(e.target.value)}>
-                      {getAllowedTypes(targetAssetId).map(t => <option key={t} value={t}>{getIcon(t)} {t}</option>)}
-                    </select>
-                    
-                    <input type="date" value={recordMode === 'meter' ? meterDate : invoiceDate} onChange={(e) => recordMode === 'meter' ? setMeterDate(e.target.value) : setInvoiceDate(e.target.value)} />
-                    <input type="number" value={value} onChange={(e) => setValue(e.target.value)} placeholder="Érték (egység / Ft)" />
-                    
-                    <div className="action-buttons-row">
-                      <button className="btn-submit-form" onClick={handleSave} disabled={!targetAssetId || targetAssetId === 'all' || !value}>
-                        {editingRecordId ? 'Módosítás mentése' : 'Adat rögzítése'}
-                      </button>
-                      {editingRecordId && <button className="btn-cancel-flat" onClick={cancelRecordEdit}>Mégse</button>}
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {!isReadOnly && (
-                <div className="dashboard-card compact-card">
-                  <h4 className="sub-title">Hozzáférés megosztása</h4>
-                  <div className="flex-input-group">
-                    <input type="email" placeholder="partner@email.com" value={shareEmail} onChange={(e) => setShareEmail(e.target.value)} />
-                    <button className="btn-add-plus" onClick={handleShare}>+</button>
-                  </div>
-                  {myShares.length > 0 && (
-                    <div className="shares-mini-list">
-                      {myShares.map(s => (
-                        <div key={s.id} className="share-mini-item">
-                          <span>{s.shared_with_email}</span>
-                          <button onClick={() => revokeShare(s.id)}>törlés</button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-            </aside>
-
-            <main className="dashboard-main">
-              
-              <div className="toolbar-card">
-                <div className="category-scroll-chips">
-                  {categories.map(c => (
-                    <button key={c.Id} className={`chip-btn ${filter === c.Name ? 'active' : ''}`} onClick={() => setFilter(c.Name)} style={filter === c.Name ? {backgroundColor: getColor(c.Name), borderColor: getColor(c.Name)} : {}}>{c.Icon} {c.Name}</button>
-                  ))}
-                  {displayMode === 'cost' && (
-                    <>
-                      <button className={`chip-btn ${filter === 'Összes kiadás' ? 'active' : ''}`} onClick={() => setFilter('Összes kiadás')} style={{backgroundColor: filter === 'Összes kiadás' ? getColor('Összes kiadás') : ''}}>{getIcon('Összes kiadás')} Összes kiadás</button>
-                      <button className={`chip-btn ${filter === 'Összes' ? 'active' : ''}`} onClick={() => setFilter('Összes')} style={{backgroundColor: filter === 'Összes' ? getColor('Összes') : ''}}>{getIcon('Összes')} Összesen</button>
-                    </>
-                  )}
-                </div>
-
-                <div className="display-toggles">
-                  <div className="toggle-group-row">
-                    <div className="toggle-group">
-                      <button className={displayMode === 'usage' ? 'active' : ''} disabled={categories.find(c => c.Name === filter)?.Type === 'invoice_only' || categories.find(c => c.Name === filter)?.Type === 'income' || filter === 'Összes' || filter === 'Összes kiadás'} onClick={() => setDisplayMode('usage')}>Fogyasztás</button>
-                      <button className={displayMode === 'cost' ? 'active' : ''} onClick={() => setDisplayMode('cost')}>Költség</button>
-                    </div>
-
-                    <div className="toggle-group">
-                      <button className={viewMode === 'monthly' ? 'active' : ''} onClick={() => setViewMode('monthly')}>Havi</button>
-                      <button className={viewMode === 'annual' ? 'active' : ''} onClick={() => setViewMode('annual')}>Éves</button>
-                    </div>
-                  </div>
-
-                  <div className="toggle-group-row width-100">
-                    <select className="styled-range-select" value={chartRange} onChange={(e) => { const val = e.target.value; setChartRange(val === 'all' || val === 'custom' ? val : parseInt(val)); }}>
-                      {viewMode === 'monthly' && <option value={6}>Utolsó 6 hónap</option>}
-                      {viewMode === 'monthly' && <option value={12}>Utolsó 12 hónap</option>}
-                      {viewMode === 'monthly' && <option value={24}>Utolsó 24 hónap</option>}
-                      <option value="all">Minden adat</option>
-                      <option value="custom">Egyedi...</option>
-                    </select>
-
-                    {chartRange === 'custom' && (
-                      <div className="custom-range-inputs">
-                        <input type="month" value={customStartDate} onChange={(e) => setCustomStartDate(e.target.value)} />
-                        <span>-</span>
-                        <input type="month" value={customEndDate} onChange={(e) => setCustomEndDate(e.target.value)} />
+                  {!isReadOnly && (
+                    <div className="ui-widget-card">
+                      <h3 className="card-heading-clean">Új adat hozzáadása</h3>
+                      <div className="mode-toggle-pill">
+                        <button className={`pill-item ${recordMode === 'meter' ? 'active' : ''}`} onClick={() => setRecordMode('meter')}>📟 Óraállás</button>
+                        <button className={`pill-item ${recordMode === 'invoice' ? 'active' : ''}`} onClick={() => setRecordMode('invoice')}>💰 Számla</button>
                       </div>
-                    )}
+                      <div className="form-stack-vertical">
+                        <select value={targetAssetId} onChange={(e) => setTargetAssetId(e.target.value)}>
+                          <option value="">Eszköz választás...</option>
+                          {assets.map((a: any) => (<option key={a.Id} value={a.Id}>{a.FriendlyName}</option>))}
+                        </select>
+                        <select value={type} onChange={(e) => setType(e.target.value)}>
+                          {getAllowedTypes(targetAssetId).map(t => <option key={t} value={t}>{getIcon(t)} {t}</option>)}
+                        </select>
+                        <input type="date" value={recordMode === 'meter' ? meterDate : invoiceDate} onChange={(e) => recordMode === 'meter' ? setMeterDate(e.target.value) : setInvoiceDate(e.target.value)} />
+                        <input type="number" value={value} onChange={(e) => setValue(e.target.value)} placeholder="Érték / Összeg" />
+                        <button className="btn-action-primary" onClick={handleSave}>Adat mentése</button>
+                      </div>
+                    </div>
+                  )}
+                </aside>
+
+                {/* JOBB OLDAL: KATEGÓRIÁK ÉS GRAFIKON */}
+                <section className="main-viewport-pane">
+                  
+                  {/* FIX GOMB RÁCS - ELFÉR MIND, NINCS ELDUGVA */}
+                  <div className="ui-widget-card">
+                    <div className="grid-wrapping-chips">
+                      {categories.map(c => (
+                        <button key={c.Id} className={`grid-chip-item ${filter === c.Name ? 'active' : ''}`} onClick={() => setFilter(c.Name)} style={filter === c.Name ? {backgroundColor: getColor(c.Name), color: 'white'} : {}}>{c.Icon} {c.Name}</button>
+                      ))}
+                      {displayMode === 'cost' && (
+                        <>
+                          <button className={`grid-chip-item ${filter === 'Összes kiadás' ? 'active' : ''}`} onClick={() => setFilter('Összes kiadás')} style={{backgroundColor: getColor('Összes kiadás'), color:'white'}}>{getIcon('Összes kiadás')} Összes kiadás</button>
+                          <button className={`grid-chip-item ${filter === 'Összes' ? 'active' : ''}`} onClick={() => setFilter('Összes')} style={{backgroundColor: getColor('Összes'), color:'white'}}>{getIcon('Összes')} Összesen</button>
+                        </>
+                      )}
+                    </div>
+
+                    <div className="chart-filter-controls-row">
+                      <div className="compact-btn-group">
+                        <button className={displayMode === 'usage' ? 'active' : ''} onClick={() => setDisplayMode('usage')}>Fogyasztás</button>
+                        <button className={displayMode === 'cost' ? 'active' : ''} onClick={() => setDisplayMode('cost')}>Költség</button>
+                      </div>
+                      <div className="compact-btn-group">
+                        <button className={viewMode === 'monthly' ? 'active' : ''} onClick={() => setViewMode('monthly')}>Havi</button>
+                        <button className={viewMode === 'annual' ? 'active' : ''} onClick={() => setViewMode('annual')}>Éves</button>
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </div>
 
-              <div className="dashboard-card chart-container-card">
-                {chartData.length > 0 ? (
-                  <ResponsiveContainer width="100%" height={280}>
-                    <BarChart data={chartData} margin={{ top: 10, right: 5, left: -25, bottom: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                      <XAxis dataKey="label" fontSize={11} stroke="#64748b" tickLine={false} />
-                      <YAxis fontSize={11} stroke="#64748b" tickLine={false} axisLine={false} />
-                      <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(0, 0, 0, 0.02)' }} />
-                      <Legend iconType="circle" wrapperStyle={{ fontSize: '11px', paddingTop: '12px' }} />
-                      
-                      {(selectedAssetId === 'all' ? assets : assets.filter(a => String(a.Id) === String(selectedAssetId))).map((asset, idx) => {
-                        const color = selectedAssetId === 'all' ? ASSET_COLORS[idx % ASSET_COLORS.length] : getColor();
-                        return (
+                  <div className="ui-widget-card">
+                    <ResponsiveContainer width="100%" height={300}>
+                      <BarChart data={chartData}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                        <XAxis dataKey="label" fontSize={12} stroke="#64748b" />
+                        <YAxis fontSize={12} stroke="#64748b" tickLine={false} axisLine={false} />
+                        <Tooltip content={<CustomTooltip />} />
+                        <Legend iconType="circle" />
+                        {(selectedAssetId === 'all' ? assets : assets.filter(a => String(a.Id) === String(selectedAssetId))).map((asset, idx) => (
                           <React.Fragment key={asset.Id}>
-                            <Bar dataKey={asset.FriendlyName} stackId="expense" fill={color} radius={[3, 3, 0, 0]} />
-                            <Bar 
-                              dataKey={`${asset.FriendlyName}_income`} 
-                              name={`${asset.FriendlyName} (Bevétel)`} 
-                              stackId="income" 
-                              fill={color} 
-                              opacity={0.4} 
-                              legendType="none" 
-                            />
+                            <Bar dataKey={asset.FriendlyName} stackId="a" fill={ASSET_COLORS[idx % ASSET_COLORS.length]} radius={[3,3,0,0]} />
                           </React.Fragment>
-                        );
-                      })}
-                    </BarChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <div className="empty-state-notice">Nincs adat a választott időszakban.</div>
-                )}
+                        ))}
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </section>
               </div>
+            )}
 
-              <div className="list-history-wrapper">
-                <h3 className="section-title-flat">Tranzakciós előzmények ({combinedList.length})</h3>
-                <div className="records-feed">
+            {/* ================= TAB 2: TRANZAKCIÓK ================= */}
+            {activeTab === 'transactions' && (
+              <div className="fullwidth-list-view">
+                <div className="list-title-header-row">
+                  <h3>Minden rögzített adat ({combinedList.length} tétel)</h3>
+                </div>
+                <div className="modern-data-table-stack">
                   {combinedList.map((item: any, idx) => {
                     const asset = assets.find(a => String(a.Id) === String(item.AssetId));
-                    const cat = categories.find(c => c.Name === item.Type);
-                    const isIncome = cat?.Type === 'income';
-
+                    const isInc = categories.find(c => c.Name === item.Type)?.Type === 'income';
                     return (
-                      <div key={idx} className="feed-item-card">
-                        <div className="feed-left">
-                          <div className={`icon-indicator ${item.lType}`}>{item.lType === 'meter' ? '📟' : '💰'}</div>
-                          <div className="feed-meta-details">
-                            <span className="feed-title">{getIcon(item.Type)} {item.Type}</span>
-                            <span className="feed-sub"> {asset ? `${asset.FriendlyName}` : 'Ismeretlen'} • {String(item.d).substring(0, 10)}</span>
+                      <div key={idx} className="table-row-card">
+                        <div className="row-left-info">
+                          <span className="row-badge-type">{item.lType === 'meter' ? '📟 Óra' : '💰 Számla'}</span>
+                          <div>
+                            <div className="row-main-title">{getIcon(item.Type)} {item.Type}</div>
+                            <div className="row-sub-title">{asset ? asset.FriendlyName : 'Ismeretlen'} • {String(item.d).substring(0, 10)}</div>
                           </div>
                         </div>
-                        <div className="feed-right">
-                          <span className={`feed-value-tag ${isIncome ? 'income-green' : 'expense-dark'}`}>
-                            {isIncome ? '+' : ''}{(parseFloat(item.Value) || 0).toLocaleString()} {item.lType === 'meter' ? 'egység' : 'Ft'}
-                          </span>
+                        <div className="row-right-actions">
+                          <span className={`row-value-text ${isInc ? 'green' : ''}`}>{isInc ? '+' : ''}{parseFloat(item.Value).toLocaleString()} {item.lType === 'meter' ? 'egység' : 'Ft'}</span>
                           {!isReadOnly && (
-                            <div className="feed-actions-hover">
-                              <button className="btn-circle-edit" onClick={() => handleEditRecord(item)}>✏️</button>
-                              <button className="btn-circle-delete" onClick={async () => { if(window.confirm("Biztosan törlöd?")) { await fetch(`${BACKEND_URL}/api/${item.lType === 'meter' ? 'records' : 'invoices'}/${item.Id || item.id}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${user.token}` } }); fetchAll(user.token); } }}>❌</button>
+                            <div className="row-buttons-trigger">
+                              <button onClick={() => handleEditRecord(item)}>✏️</button>
+                              <button onClick={async () => { if(window.confirm("Törlés?")) { await fetch(`${BACKEND_URL}/api/${item.lType === 'meter' ? 'records' : 'invoices'}/${item.Id || item.id}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${user.token}` } }); fetchAll(user.token); } }}>❌</button>
                             </div>
                           )}
                         </div>
@@ -864,16 +443,100 @@ function App() {
                   })}
                 </div>
               </div>
+            )}
 
-            </main>
+            {/* ================= TAB 3: BEÁLLÍTÁSOK (MÁTRIX ÉS TÁBLÁK) ================= */}
+            {activeTab === 'settings' && (
+              <div className="settings-split-dashboard">
+                
+                {/* 1. RÉSZ: ESZKÖZÖK ÉS AZOKNAK A KATEGÓRIÁI (MÁTRIX) */}
+                <div className="ui-widget-card grid-span-full">
+                  <h3 className="section-title-accent">⚙️ Eszközökhöz tartozó kategóriák beállítása (Adatbázis mátrix)</h3>
+                  <p className="section-explain-text">Válaszd ki az eszközt a listából, majd jelöld be azokat a kategóriákat, amiket engedélyezni szeretnél hozzá. Így tiszta marad az adatbeviteli felület.</p>
+                  
+                  <div className="matrix-control-wrapper">
+                    <div className="matrix-left-asset-list">
+                      {assets.map((a: any) => (
+                        <button 
+                          key={a.Id} 
+                          className={`matrix-asset-sidebar-item ${matrixSelectedAssetId === String(a.Id) ? 'active' : ''}`}
+                          onClick={() => setMatrixSelectedAssetId(String(a.Id))}
+                        >
+                          <span>{a.Category === 'car' ? '🚗' : a.Category === 'person' ? '👤' : '🏠'} {a.FriendlyName}</span>
+                          <small>({a.Category})</small>
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="matrix-right-checkbox-panel">
+                      {matrixSelectedAssetId ? (
+                        <>
+                          <h4>Engedélyezett típusok ehhez: <span className="highlight-blue">{assets.find(a => String(a.Id) === matrixSelectedAssetId)?.FriendlyName}</span></h4>
+                          <div className="checkbox-toggles-flex-grid">
+                            {categories.map((c: any) => {
+                              const isChecked = (assetCategoryMap[matrixSelectedAssetId] || []).includes(c.Name);
+                              return (
+                                <label key={c.Id} className={`checkbox-matrix-tile ${isChecked ? 'selected' : ''}`}>
+                                  <input 
+                                    type="checkbox" 
+                                    checked={isChecked} 
+                                    onChange={() => handleToggleCategoryForAsset(matrixSelectedAssetId, c.Name)}
+                                  />
+                                  <span className="tile-icon">{c.Icon}</span>
+                                  <span className="tile-name">{c.Name}</span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </>
+                      ) : (
+                        <div className="empty-state-text">Válassz egy eszközt a bal oldali listából a kategóriák hozzárendeléséhez.</div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* 2. RÉSZ: ÚJ ESZKÖZ LÉTREHOZÁSA */}
+                <div className="ui-widget-card">
+                  <h3 className="card-heading-clean">➕ Új eszköz / entitás hozzáadása</h3>
+                  <div className="vertical-form mt-2">
+                    <select value={newAsset.category} onChange={(e) => setNewAsset({...newAsset, category: e.target.value})}>
+                      <option value="property">🏠 Ingatlan</option>
+                      <option value="car">🚗 Jármű</option>
+                      <option value="person">👤 Személy (Saját/Családtag)</option>
+                    </select>
+                    <input placeholder="Eszköz megnevezése (pl. Otthon, Toyota)" value={newAsset.friendlyName} onChange={(e) => setNewAsset({...newAsset, friendlyName: e.target.value})} />
+                    <button className="btn-action-primary" onClick={handleAssetSave}>Eszköz mentése</button>
+                  </div>
+                </div>
+
+                {/* 3. RÉSZ: HOGYAN OSZD MEG A CSALÁDDAL */}
+                <div className="ui-widget-card">
+                  <h3 className="card-heading-clean">🤝 Családi hozzáférések megosztása</h3>
+                  <div className="flex-input-group mt-2">
+                    <input type="email" placeholder="partner@gmail.com" value={shareEmail} onChange={(e) => setShareEmail(e.target.value)} />
+                    <button className="btn-add-plus" onClick={handleShare}>+</button>
+                  </div>
+                  <div className="shares-static-list mt-3">
+                    {myShares.map(s => (
+                      <div key={s.id} className="share-list-row-item">
+                        <span>{s.shared_with_email}</span>
+                        <button className="flat-delete-btn" onClick={() => revokeShare(s.id)}>visszavonás</button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+              </div>
+            )}
+
           </div>
         ) : (
           <div className="auth-wrapper-centered">
             <div className="auth-hero-card">
               <h1 className="auth-title">Üdvözöl a <span className="gradient-text">Rezsiapp 2.0</span></h1>
-              <p className="auth-subtitle">Háztartási költségeid és mérőóráid letisztult, világos kezelőfelülete.</p>
+              <p className="auth-subtitle">A háztartási rezsiköltségek és közüzemi óraállások letisztult, transzparens felülete.</p>
               <div className="auth-action-box">
-                <p>A belépéshez használd a meglévő Google fiókodat.</p>
                 <div className="google-signin-btn-container">
                   <GoogleLogin onSuccess={(res) => handleLoginSuccess(res.credential!)} />
                 </div>
@@ -882,17 +545,17 @@ function App() {
           </div>
         )}
 
-        {/* --- APPS LIGHT-THEME ENGINE & RESPONSIVE FIXES --- */}
+        {/* --- PRÉMIUM VILÁGOS SASS TÉMA (LIGHT ENGINE) --- */}
         <style>{`
           :root {
             --bg-main: #f8fafc;
             --bg-card: #ffffff;
             --bg-hover: #f1f5f9;
-            --text-main: #0f172a;
+            --text-main: #1e293b;
             --text-muted: #64748b;
             --accent: #4f46e5;
             --accent-hover: #4338ca;
-            --border-color: #e2e8f0;
+            --border: #e2e8f0;
             --emerald: #10b981;
             --rose: #ef4444;
           }
@@ -902,232 +565,185 @@ function App() {
             color: var(--text-main);
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             margin: 0; padding: 0;
-            font-size: 16px;
-            -webkit-font-smoothing: antialiased;
+            font-size: 15px;
           }
 
           .app-container {
-            max-width: 1280px;
+            max-width: 1300px;
             margin: 0 auto;
-            padding: 16px;
+            padding: 20px;
             box-sizing: border-box;
-            width: 100%;
           }
 
+          /* --- MODERN PREMIUM HEADER --- */
           .app-header {
             background: var(--bg-card);
+            border: 1px solid var(--border);
             border-radius: 16px;
-            padding: 16px 20px;
-            margin-bottom: 20px;
-            border: 1px solid var(--border-color);
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-          }
-
-          .header-top-row {
+            padding: 12px 24px;
+            margin-bottom: 24px;
             display: flex;
             justify-content: space-between;
             align-items: center;
+            flex-wrap: wrap;
+            gap: 16px;
+            box-shadow: 0 4px 6px -1px rgba(0,0,0,0.03);
           }
 
-          .brand-logo h1 {
-            font-size: 1.3rem; margin: 0; font-weight: 700; color: var(--text-main);
+          .header-brand-section { display: flex; align-items: center; gap: 8px; }
+          .header-brand-section h2 { margin: 0; font-size: 1.2rem; font-weight: 800; letter-spacing: -0.5px; }
+          .version-tag { color: var(--accent); font-size: 0.8rem; }
+
+          .header-navigation-tabs { display: flex; gap: 6px; }
+          .nav-tab-link {
+            background: transparent; border: none; padding: 10px 16px; font-size: 0.9rem;
+            font-weight: 600; color: var(--text-muted); cursor: pointer; border-radius: 10px;
+            transition: all 0.2s;
           }
+          .nav-tab-link:hover { background: var(--bg-hover); color: var(--text-main); }
+          .nav-tab-link.active { background: #e0e7ff; color: var(--accent); }
 
-          .version-tag { color: var(--accent); font-size: 0.85rem; }
-          .header-actions-row { display: flex; gap: 8px; }
-          .header-actions-row .nav-btn { flex: 1; text-align: center; padding: 10px; font-size: 0.9rem; }
+          .header-user-badge { display: flex; align-items: center; gap: 12px; }
+          .user-round-avatar { width: 36px; height: 36px; border-radius: 50%; border: 2px solid #c7d2fe; }
+          .logout-trigger-btn { background: transparent; border: none; cursor: pointer; font-size: 1.2rem; }
 
-          .nav-btn {
-            background: #f1f5f9; border: 1px solid var(--border-color); color: var(--text-main);
-            border-radius: 10px; cursor: pointer; font-weight: 600; transition: all 0.2s;
-          }
-          .nav-btn:hover { background: #e2e8f0; }
-          .nav-btn-primary { background: var(--accent); border-color: var(--accent); color: white; }
-          .nav-btn-primary:hover { background: var(--accent-hover); }
-
-          .user-profile-zone { display: flex; align-items: center; gap: 12px; }
-          .user-avatar { width: 38px; height: 38px; border-radius: 50%; border: 2px solid var(--accent); }
-          .btn-logout-icon { background: transparent; border: none; cursor: pointer; font-size: 1.3rem; }
-
-          .dashboard-grid {
+          /* --- RE-DESIGNED LAYOUT GRID --- */
+          .dashboard-layout-grid {
             display: grid;
             grid-template-columns: 1fr;
             gap: 20px;
-            width: 100%;
           }
-
           @media (min-width: 992px) {
-            .dashboard-grid {
-              grid-template-columns: 320px 1fr;
-            }
+            .dashboard-layout-grid { grid-template-columns: 320px 1fr; }
           }
 
-          .dashboard-main {
-            min-width: 0;
-            width: 100%;
+          .sidebar-container { display: flex; flex-direction: column; gap: 20px; }
+          .main-viewport-pane { min-width: 0; display: flex; flex-direction: column; gap: 20px; }
+
+          /* --- CARDS & WIDGETS --- */
+          .ui-widget-card {
+            background: var(--bg-card); border-radius: 16px; padding: 20px;
+            border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.02);
           }
+          .compact-card { padding: 14px; }
+          .card-heading-clean { margin: 0 0 16px 0; font-size: 1rem; font-weight: 700; }
+          .input-label-flat { font-size: 0.8rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; margin-bottom: 8px; display: block; }
 
-          .dashboard-card {
-            background: var(--bg-card);
-            border-radius: 16px;
-            padding: 20px;
-            border: 1px solid var(--border-color);
-            box-shadow: 0 1px 3px rgba(0,0,0,0.02);
-          }
-
-          .compact-card { padding: 16px; }
-          .card-title { margin-top: 0; margin-bottom: 14px; font-size: 1.1rem; font-weight: 600; }
-          .sub-title { font-size: 0.85rem; color: var(--text-muted); text-transform: uppercase; margin-bottom: 10px; }
-
-          .form-group { display: flex; flex-direction: column; gap: 6px; }
-          .form-group label { font-size: 0.8rem; color: var(--text-muted); font-weight: 600; }
-
-          .styled-select, .vertical-form select, .vertical-form input, .flex-input-group input {
-            width: 100%; padding: 12px; background: #f8fafc; border: 1px solid var(--border-color);
+          /* --- FORMS --- */
+          .form-control-select, .vertical-form select, .vertical-form input, .flex-input-group input {
+            width: 100%; padding: 12px; background: #f8fafc; border: 1px solid var(--border);
             border-radius: 10px; color: var(--text-main); font-size: 16px !important; box-sizing: border-box;
-            outline: none; height: 48px; transition: border 0.2s;
+            outline: none; height: 46px;
           }
-          .styled-select:focus, .vertical-form input:focus { border-color: var(--accent); }
+          .vertical-form { display: flex; flex-direction: column; gap: 10px; }
 
-          .vertical-form { display: flex; flex-direction: column; gap: 12px; margin-top: 14px; }
+          .mode-toggle-pill { display: flex; background: #f1f5f9; padding: 4px; border-radius: 10px; gap: 4px; margin-bottom: 12px; }
+          .pill-item { flex: 1; background: transparent; border: none; padding: 8px; font-size: 0.85rem; font-weight: 600; color: var(--text-muted); cursor: pointer; border-radius: 8px; }
+          .pill-item.active { background: white; color: var(--text-main); box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
 
-          .tab-switcher { display: flex; background: #f1f5f9; padding: 4px; border-radius: 10px; gap: 4px; }
-          .tab-btn {
-            flex: 1; background: transparent; border: none; color: var(--text-muted);
-            padding: 10px; border-radius: 8px; cursor: pointer; font-size: 0.9rem; font-weight: 600;
+          .btn-action-primary {
+            background: var(--accent); color: white; border: none; padding: 12px; border-radius: 10px;
+            font-weight: 700; font-size: 0.95rem; cursor: pointer; transition: background 0.2s;
           }
-          .tab-btn.active { background: white; color: var(--text-main); box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
-
-          .btn-submit-form {
-            background: var(--emerald); color: white; border: none; padding: 12px;
-            border-radius: 10px; cursor: pointer; font-weight: 700; font-size: 1rem; height: 48px;
-          }
-          .btn-submit-form:disabled { opacity: 0.4; cursor: not-allowed; }
+          .btn-action-primary:hover { background: var(--accent-hover); }
 
           .flex-input-group { display: flex; gap: 8px; }
-          .btn-add-plus {
-            background: var(--accent); border: none; color: white; width: 48px; height: 48px;
-            border-radius: 10px; font-size: 1.2rem; cursor: pointer;
+          .btn-add-plus { background: var(--accent); border: none; color: white; width: 46px; height: 46px; border-radius: 10px; font-size: 1.2rem; cursor: pointer; }
+
+          /* --- FIX CHIP GRID (NINCS TÖBBÉ ELVÁGVA) --- */
+          .grid-wrapping-chips {
+            display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px;
+          }
+          .grid-chip-item {
+            background: #f1f5f9; border: 1px solid var(--border); color: var(--text-main);
+            padding: 10px 14px; border-radius: 12px; font-size: 0.85rem; font-weight: 600; cursor: pointer;
+            display: inline-flex; align-items: center; gap: 6px; transition: all 0.2s;
+          }
+          .grid-chip-item:hover { background: #e2e8f0; }
+          .grid-chip-item.active { box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+
+          .chart-filter-controls-row { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-top: 10px; padding-top: 12px; border-top: 1px solid var(--border); }
+          .compact-btn-group { display: flex; background: #f1f5f9; padding: 3px; border-radius: 20px; border: 1px solid var(--border); }
+          .compact-btn-group button { background: transparent; border: none; color: var(--text-muted); padding: 5px 12px; border-radius: 20px; font-size: 0.75rem; font-weight: 700; cursor: pointer; }
+          .compact-btn-group button.active { background: white; color: var(--text-main); box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+          .styled-range-select { background: #f1f5f9; border: 1px solid var(--border); border-radius: 20px; padding: 5px 12px; font-size: 0.75rem; }
+
+          /* ================= MÁTRIX BEÁLLÍTÁSOK MENÜ ================= */
+          .settings-split-dashboard {
+            display: grid; grid-template-columns: 1fr; gap: 20px; text-align: left;
+          }
+          @media (min-width: 768px) {
+            .settings-split-dashboard { grid-template-columns: 1fr 1fr; }
+          }
+          .grid-span-full { grid-column: 1 / -1; }
+          .section-title-accent { margin-top: 0; font-size: 1.2rem; font-weight: 800; }
+          .section-explain-text { font-size: 0.9rem; color: var(--text-muted); margin-bottom: 20px; line-height: 1.4; }
+
+          .matrix-control-wrapper {
+            display: grid; grid-template-columns: 1fr; gap: 20px; border: 1px solid var(--border); border-radius: 12px; overflow: hidden;
+          }
+          @media (min-width: 768px) {
+            .matrix-control-wrapper { grid-template-columns: 240px 1fr; }
           }
 
-          .toolbar-card {
-            background: var(--bg-card); border-radius: 16px; padding: 16px;
-            border: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 14px; margin-bottom: 20px;
+          .matrix-left-asset-list { background: #f8fafc; border-right: 1px solid var(--border); padding: 12px; display: flex; flex-direction: column; gap: 6px; }
+          .matrix-asset-sidebar-item {
+            display: flex; flex-direction: column; text-align: left; padding: 12px; border: 1px solid transparent; background: transparent; border-radius: 8px; cursor: pointer;
           }
+          .matrix-asset-sidebar-item:hover { background: #e2e8f0; }
+          .matrix-asset-sidebar-item.active { background: white; border-color: var(--border); box-shadow: 0 2px 4px rgba(0,0,0,0.03); }
+          .matrix-asset-sidebar-item strong { font-size: 0.95rem; }
+          .matrix-asset-sidebar-item small { color: var(--text-muted); font-size: 0.75rem; margin-top: 2px; }
 
-          .category-scroll-chips {
-            display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px;
-            -webkit-overflow-scrolling: touch;
-          }
-          .category-scroll-chips::-webkit-scrollbar { display: none; }
+          .matrix-right-checkbox-panel { padding: 20px; background: white; }
+          .matrix-right-checkbox-panel h4 { margin-top: 0; margin-bottom: 16px; font-size: 1rem; }
+          .highlight-blue { color: var(--accent); font-weight: 700; }
 
-          .chip-btn {
-            background: #f1f5f9; border: 1px solid var(--border-color); color: var(--text-main);
-            padding: 10px 16px; border-radius: 24px; white-space: nowrap; cursor: pointer;
-            font-size: 0.85rem; font-weight: 500; display: inline-flex; align-items: center;
+          .checkbox-toggles-flex-grid {
+            display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px;
           }
-          .chip-btn.active { color: white !important; font-weight: 600; }
+          .checkbox-matrix-tile {
+            display: flex; align-items: center; gap: 10px; padding: 12px; background: #f8fafc;
+            border: 1px solid var(--border); border-radius: 10px; cursor: pointer; transition: all 0.2s;
+          }
+          .checkbox-matrix-tile input { width: 18px; height: 18px; cursor: pointer; margin: 0; }
+          .checkbox-matrix-tile.selected { background: #e0e7ff; border-color: #a5b4fc; font-weight: 600; }
+          .tile-icon { font-size: 1.1rem; }
+          .tile-name { font-size: 0.85rem; }
 
-          .display-toggles { display: flex; flex-direction: column; gap: 12px; }
-          .toggle-group-row { display: flex; gap: 8px; width: 100%; }
-          .toggle-group {
-            flex: 1; display: flex; background: #f1f5f9; padding: 4px; border-radius: 24px; border: 1px solid var(--border-color);
+          /* --- TRANZAKCIÓS LISTA (DEDIKÁLT TAB) --- */
+          .fullwidth-list-view { text-align: left; }
+          .list-title-header-row { margin-bottom: 16px; }
+          .modern-data-table-stack { display: flex; flex-direction: column; gap: 8px; }
+          .table-row-card {
+            background: white; border: 1px solid var(--border); border-radius: 12px; padding: 14px 20px;
+            display: flex; justify-content: space-between; align-items: center; gap: 15px;
           }
-          .toggle-group button {
-            flex: 1; background: transparent; border: none; color: var(--text-muted);
-            padding: 8px; border-radius: 20px; font-size: 0.8rem; font-weight: 600; cursor: pointer;
-          }
-          .toggle-group button.active { background: var(--accent); color: white; }
+          .row-left-info { display: flex; align-items: center; gap: 16px; }
+          .row-badge-type { background: #f1f5f9; padding: 4px 10px; border-radius: 8px; font-size: 0.75rem; font-weight: 700; color: var(--text-muted); }
+          .row-main-title { font-weight: 700; font-size: 0.95rem; }
+          .row-sub-title { font-size: 0.8rem; color: var(--text-muted); margin-top: 2px; }
+          .row-right-actions { display: flex; align-items: center; gap: 16px; }
+          .row-value-text { font-weight: 700; font-size: 1rem; color: var(--text-main); }
+          .row-value-text.green { color: var(--emerald); }
+          .row-buttons-trigger button { background: #f1f5f9; border: 1px solid var(--border); padding: 6px; border-radius: 6px; cursor: pointer; margin-left: 4px; }
 
-          .styled-range-select {
-            width: 100%; background: #f1f5f9; color: var(--text-main); border: 1px solid var(--border-color);
-            padding: 10px; border-radius: 24px; font-size: 0.85rem; outline: none; height: 42px;
-          }
+          /* --- MEGOSZTÁSOK LISTÁJA --- */
+          .share-list-row-item { display: flex; justify-content: space-between; padding: 8px 12px; background: #f8fafc; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 6px; font-size: 0.85rem; }
+          .flat-delete-btn { background: transparent; border: none; color: var(--rose); cursor: pointer; font-size: 0.8rem; }
 
-          .matrix-title { font-weight: 700; font-size: 1rem; margin: 15px 0 10px 0; color: var(--text-main); }
-          .asset-matrix-card {
-            background: #f8fafc; border: 1px solid var(--border-color); border-radius: 12px;
-            padding: 14px; margin-bottom: 12px;
-          }
-          .asset-matrix-header {
-            display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;
-          }
-          .type-badge { font-size: 0.75rem; background: #e2e8f0; padding: 2px 8px; border-radius: 12px; color: var(--text-muted); font-weight: 600; }
-          
-          .matrix-checkbox-grid {
-            display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px;
-          }
-          .matrix-checkbox-item {
-            display: flex; align-items: center; gap: 6px; background: white; padding: 8px;
-            border-radius: 8px; border: 1px solid var(--border-color); cursor: pointer; font-size: 0.85rem;
-          }
-          .matrix-checkbox-item.checked { background: #e0e7ff; border-color: #c7d2fe; font-weight: 600; }
-          .scrollable-list { max-height: 380px; overflow-y: auto; padding-right: 4px; }
+          /* --- CUSTOM TOOLTIP --- */
+          .custom-tooltip-box { background: white; padding: 12px; border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); font-size: 13px; }
+          .tooltip-title { margin: 0 0 6px 0; font-weight: bold; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
+          .tooltip-row { display: flex; justify-content: space-between; gap: 16px; }
 
-          .list-history-wrapper { margin-top: 20px; }
-          .section-title-flat { font-size: 1.1rem; margin-bottom: 12px; font-weight: 600; color: var(--text-muted); }
-          .records-feed { display: flex; flex-direction: column; gap: 8px; }
-
-          .feed-item-card {
-            background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px;
-            padding: 14px; display: flex; justify-content: space-between; align-items: center;
-          }
-          .feed-left { display: flex; align-items: center; gap: 12px; }
-          .icon-indicator {
-            width: 38px; height: 38px; border-radius: 10px; background: #f1f5f9;
-            display: flex; align-items: center; justify-content: center; font-size: 1.1rem;
-          }
-          .feed-meta-details { display: flex; flex-direction: column; }
-          .feed-title { font-weight: 600; font-size: 0.95rem; }
-          .feed-sub { font-size: 0.8rem; color: var(--text-muted); margin-top: 2px; }
-          .feed-right { display: flex; align-items: center; gap: 12px; }
-          .feed-value-tag { font-weight: 700; font-size: 1rem; }
-          .income-green { color: var(--emerald); }
-          .expense-dark { color: var(--text-main); }
-
-          .feed-actions-hover { display: flex; gap: 4px; }
-          .btn-circle-edit, .btn-circle-delete {
-            background: #f1f5f9; border: 1px solid var(--border-color); border-radius: 8px;
-            width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; cursor: pointer;
-          }
-
-          .modal-backdrop {
-            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(15, 23, 42, 0.4); backdrop-filter: blur(4px);
-            display: flex; align-items: center; justify-content: center; z-index: 2000; padding: 12px;
-          }
-          .modal-content {
-            background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 20px;
-            padding: 24px; width: 100%; max-width: 480px; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1);
-            max-height: 90vh; overflow-y: auto; box-sizing: border-box;
-          }
-          .text-left { text-align: left; }
-          .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
-          .close-modal { background: transparent; border: none; color: var(--text-muted); font-size: 1.6rem; cursor: pointer; }
-          .modal-form { display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px; }
-          .btn-save-action { background: var(--accent); color: white; border: none; padding: 12px; border-radius: 10px; font-weight: 600; cursor: pointer; }
-          .list-item-row {
-            display: flex; justify-content: space-between; align-items: center;
-            background: #f8fafc; padding: 12px; border-radius: 10px; margin-bottom: 6px; border: 1px solid var(--border-color);
-          }
-
-          .custom-tooltip-box {
-            background: white; padding: 12px; border: 1px solid var(--border-color); border-radius: 8px;
-            color: var(--text-main); box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); font-size: 13px;
-          }
-          .tooltip-title { margin: 0 0 6px 0; font-weight: bold; border-bottom: 1px solid var(--border-color); padding-bottom: 4px; }
-          .tooltip-row { display: flex; justify-content: space-between; gap: 16px; margin-bottom: 3px; }
-
-          .auth-wrapper-centered { display: flex; justify-content: center; align-items: center; min-height: 70vh; }
-          .auth-hero-card { background: white; border: 1px solid var(--border-color); max-width: 440px; padding: 30px; border-radius: 20px; text-align: center; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); }
-          .gradient-text { color: var(--accent); font-weight: 800; }
-          .auth-title { font-size: 1.7rem; margin-bottom: 8px; }
-          .auth-subtitle { color: var(--text-muted); font-size: 0.95rem; line-height: 1.4; }
-          .auth-action-box { background: #f8fafc; padding: 16px; border-radius: 12px; border: 1px solid var(--border-color); margin-top: 20px; }
-          .google-signin-btn-container { display: flex; justify-content: center; margin-top: 10px; }
+          /* --- AUTH PANELEK --- */
+          .auth-wrapper-centered { display: flex; justify-content: center; align-items: center; min-height: 60vh; }
+          .auth-hero-card { background: white; border: 1px solid var(--border); max-width: 420px; padding: 32px; border-radius: 20px; text-align: center; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.05); }
+          .auth-title { font-size: 1.6rem; margin-top: 0; }
+          .auth-subtitle { color: var(--text-muted); font-size: 0.9rem; line-height: 1.4; }
+          .auth-action-box { background: #f8fafc; padding: 20px; border-radius: 12px; border: 1px solid var(--border); margin-top: 20px; }
+          .google-signin-btn-container { display: flex; justify-content: center; }
         `}</style>
       </div>
     </GoogleOAuthProvider>
