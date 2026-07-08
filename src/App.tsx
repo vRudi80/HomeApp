@@ -23,10 +23,7 @@ function App() {
   const [viewingUserId, setViewingUserId] = useState<string | null>(null);
   const [selectedAssetId, setSelectedAssetId] = useState<string>('all');
   
-  // Navigációs állapot (dashboard / transactions / settings)
   const [activeTab, setActiveTab] = useState<'dashboard' | 'transactions' | 'settings'>('dashboard');
-  
-  // Kijelölt eszköz a beállítások menüpont alatti mátrixhoz
   const [matrixSelectedAssetId, setMatrixSelectedAssetId] = useState<string>('');
 
   const [recordMode, setRecordMode] = useState<'meter' | 'invoice'>('meter');
@@ -62,14 +59,21 @@ function App() {
   const isAdmin = user && ADMIN_EMAILS.includes(user.email);
   const isReadOnly = viewingUserId !== null && viewingUserId !== user?.sub;
 
-  // Automatikusan kijelöli az első eszközt a mátrixhoz, ha betöltődtek az eszközök
   useEffect(() => {
     if (assets.length > 0 && !matrixSelectedAssetId) {
       setMatrixSelectedAssetId(String(assets[0].Id));
     }
   }, [assets]);
 
-  // --- API KAPCSOLATOK ---
+  // Biztonsági szűrés: Ha az eszközhöz nem tartozik a kiválasztott főkategória-chip, állítsuk vissza Összesre
+  useEffect(() => {
+    const allowed = getAllowedTypes(selectedAssetId);
+    if (filter !== 'Összes' && filter !== 'Összes kiadás' && !allowed.includes(filter)) {
+      setFilter('Összes');
+    }
+  }, [selectedAssetId, assetCategoryMap]);
+
+  // --- API LAPKAPCSOLATOK ---
   const handleToggleCategoryForAsset = async (assetId: string, categoryName: string) => {
     if (isReadOnly) return;
     try {
@@ -178,13 +182,11 @@ function App() {
     return allCatNames;
   };
 
-  useEffect(() => {
-    if (selectedAssetId !== 'all') {
-      if (!editingRecordId) setTargetAssetId(selectedAssetId);
-    } else {
-      setFilter('Összes');
-    }
-  }, [selectedAssetId]);
+  // Dinamikusan szűrt kategóriák a grafikon feletti gombokhoz
+  const visibleCategories = useMemo(() => {
+    const allowedNames = getAllowedTypes(selectedAssetId);
+    return categories.filter(c => allowedNames.includes(c.Name));
+  }, [categories, selectedAssetId, assetCategoryMap]);
 
   // --- GRAFIKON ADATOK ---
   const chartData = useMemo(() => {
@@ -234,10 +236,11 @@ function App() {
       });
     }
     const sorted = Object.values(dataMap).sort((a: any, b: any) => a.label.localeCompare(b.label));
-    return chartRange === 'custom' ? sorted : (chartRange === 'all' ? sorted : sorted.slice(-chartRange));
-  }, [records, invoices, assets, filter, displayMode, viewMode, selectedAssetId, chartRange]);
+    return chartRange === 'custom' 
+      ? sorted.filter((item: any) => item.label >= customStartDate && item.label <= customEndDate)
+      : (chartRange === 'all' ? sorted : sorted.slice(-chartRange));
+  }, [records, invoices, assets, filter, displayMode, viewMode, selectedAssetId, chartRange, customStartDate, customEndDate]);
 
-  // --- RENDERELESEK ÉS TOOLTIP FIX (Hatósugaras funkció) ---
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
       const unit = displayMode === 'cost' ? 'Ft' : '';
@@ -293,19 +296,10 @@ function App() {
           )}
           
           <div className="tooltip-footer">
-            {totalExp > 0 && (
-              <div className="tooltip-row font-rose">
-                <span>Össz. Kiadás:</span><span>-{totalExp.toLocaleString()} {unit}</span>
-              </div>
-            )}
-            {totalInc > 0 && (
-              <div className="tooltip-row font-emerald">
-                <span>Össz. Bevétel:</span><span>+{totalInc.toLocaleString()} {unit}</span>
-              </div>
-            )}
+            {totalExp > 0 && <div className="tooltip-row font-rose"><span>Össz. Kiadás:</span><span>-{totalExp.toLocaleString()} {unit}</span></div>}
+            {totalInc > 0 && <div className="tooltip-row font-emerald"><span>Össz. Bevétel:</span><span>+{totalInc.toLocaleString()} {unit}</span></div>}
             <div className="tooltip-net" style={{ color: netTotal > 0 ? '#10b981' : (netTotal < 0 ? '#ef4444' : '#0f172a') }}>
-              <span>Egyenleg:</span>
-              <span>{netTotal > 0 ? '+' : ''}{netTotal.toLocaleString()} {unit}</span>
+              <span>Egyenleg:</span><span>{netTotal > 0 ? '+' : ''}{netTotal.toLocaleString()} {unit}</span>
             </div>
           </div>
         </div>
@@ -314,7 +308,6 @@ function App() {
     return null;
   };
 
-  // --- REKORD MENTÉSE ---
   const handleSave = async () => {
     if (!targetAssetId || targetAssetId === 'all' || !value) return alert("Hiányzó adatok!");
     const currentCat = categories.find(c => c.Name === type);
@@ -373,7 +366,7 @@ function App() {
     <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
       <div className="app-container">
         
-        {/* --- MODERNISELT APPS HEADER --- */}
+        {/* --- APPS HEADER --- */}
         <header className="app-header">
           <div className="header-brand-section">
             <span className="brand-icon">⚡</span>
@@ -403,7 +396,7 @@ function App() {
             {activeTab === 'dashboard' && (
               <div className="dashboard-layout-grid">
                 
-                {/* BAL OLDALSÁV: ADATRÖGZÍTÉS */}
+                {/* BAL OLDALSÁV: DESIGNOS ADATRÖGZÍTÉS */}
                 <aside className="sidebar-container">
                   <div className="ui-widget-card">
                     <label className="input-label-flat">Eszköz gyorsválasztó</label>
@@ -431,8 +424,13 @@ function App() {
                           {getAllowedTypes(targetAssetId).map(t => <option key={t} value={t}>{getIcon(t)} {t}</option>)}
                         </select>
                         <input type="date" value={recordMode === 'meter' ? meterDate : invoiceDate} onChange={(e) => recordMode === 'meter' ? setMeterDate(e.target.value) : setInvoiceDate(e.target.value)} />
-                        <input type="number" value={value} onChange={(e) => setValue(e.target.value)} placeholder="Érték / Összeg" />
-                        <button className="btn-action-primary" onClick={handleSave}>Adat mentése</button>
+                        <input type="number" value={value} onChange={(e) => setValue(e.target.value)} placeholder="Érték (egység / Ft)" />
+                        
+                        <div className="action-buttons-row">
+                          <button className="btn-submit-form" onClick={handleSave} disabled={!targetAssetId || targetAssetId === 'all' || !value}>
+                            {editingRecordId ? 'Módosítás mentése' : 'Adat mentése'}
+                          </button>
+                        </div>
                       </div>
                     </div>
                   )}
@@ -441,40 +439,59 @@ function App() {
                 {/* JOBB OLDAL: KATEGÓRIÁK ÉS GRAFIKON */}
                 <section className="main-viewport-pane">
                   
-                  {/* FIX GOMB RÁCS - ELFÉR MIND, NINCS ELDUGVA */}
+                  {/* DINAMIKUSAN SZŰRT KATEGÓRIA CHIPEK */}
                   <div className="ui-widget-card">
                     <div className="grid-wrapping-chips">
-                      {categories.map(c => (
+                      <button className={`grid-chip-item ${filter === 'Összes' ? 'active' : ''}`} onClick={() => setFilter('Összes')} style={filter === 'Összes' ? {backgroundColor: getColor('Összes'), color:'white'} : {}}>📊 Összesen</button>
+                      {displayMode === 'cost' && (
+                        <button className={`grid-chip-item ${filter === 'Összes kiadás' ? 'active' : ''}`} onClick={() => setFilter('Összes kiadás')} style={filter === 'Összes kiadás' ? {backgroundColor: getColor('Összes kiadás'), color:'white'} : {}}>📉 Összes kiadás</button>
+                      )}
+                      {visibleCategories.map(c => (
                         <button key={c.Id} className={`grid-chip-item ${filter === c.Name ? 'active' : ''}`} onClick={() => setFilter(c.Name)} style={filter === c.Name ? {backgroundColor: getColor(c.Name), color: 'white'} : {}}>{c.Icon} {c.Name}</button>
                       ))}
-                      {displayMode === 'cost' && (
-                        <>
-                          <button className={`grid-chip-item ${filter === 'Összes kiadás' ? 'active' : ''}`} onClick={() => setFilter('Összes kiadás')} style={{backgroundColor: getColor('Összes kiadás'), color:'white'}}>{getIcon('Összes kiadás')} Összes kiadás</button>
-                          <button className={`grid-chip-item ${filter === 'Összes' ? 'active' : ''}`} onClick={() => setFilter('Összes')} style={{backgroundColor: getColor('Összes'), color:'white'}}>{getIcon('Összes')} Összesen</button>
-                        </>
-                      )}
                     </div>
 
+                    {/* IDŐSZAK SZŰRŐ ÉS PRESZETEK */}
                     <div className="chart-filter-controls-row">
-                      <div className="compact-btn-group">
-                        <button className={displayMode === 'usage' ? 'active' : ''} onClick={() => setDisplayMode('usage')}>Fogyasztás</button>
-                        <button className={displayMode === 'cost' ? 'active' : ''} onClick={() => setDisplayMode('cost')}>Költség</button>
+                      <div className="controls-left-side-modes">
+                        <div className="compact-btn-group">
+                          <button className={displayMode === 'usage' ? 'active' : ''} onClick={() => setDisplayMode('usage')}>Fogyasztás</button>
+                          <button className={displayMode === 'cost' ? 'active' : ''} onClick={() => setDisplayMode('cost')}>Költség</button>
+                        </div>
+                        <div className="compact-btn-group">
+                          <button className={viewMode === 'monthly' ? 'active' : ''} onClick={() => setViewMode('monthly')}>Havi</button>
+                          <button className={viewMode === 'annual' ? 'active' : ''} onClick={() => setViewMode('annual')}>Éves</button>
+                        </div>
                       </div>
-                      <div className="compact-btn-group">
-                        <button className={viewMode === 'monthly' ? 'active' : ''} onClick={() => setViewMode('monthly')}>Havi</button>
-                        <button className={viewMode === 'annual' ? 'active' : ''} onClick={() => setViewMode('annual')}>Éves</button>
+
+                      <div className="controls-right-side-dates">
+                        <select className="form-control-select styled-range-select" value={chartRange} onChange={(e) => { const val = e.target.value; setChartRange(val === 'all' || val === 'custom' ? val : parseInt(val)); }}>
+                          {viewMode === 'monthly' && <option value={6}>Utolsó 6 hónap</option>}
+                          {viewMode === 'monthly' && <option value={12}>Utolsó 12 hónap</option>}
+                          {viewMode === 'monthly' && <option value={24}>Utolsó 24 hónap</option>}
+                          <option value="all">Minden korábbi adat</option>
+                          <option value="custom">Egyedi időszak...</option>
+                        </select>
+
+                        {chartRange === 'custom' && (
+                          <div className="custom-range-inputs-wrapper">
+                            <input type="month" className="small-date-input" value={customStartDate} onChange={(e) => setCustomStartDate(e.target.value)} />
+                            <span className="date-separator">-</span>
+                            <input type="month" className="small-date-input" value={customEndDate} onChange={(e) => setCustomEndDate(e.target.value)} />
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
 
                   <div className="ui-widget-card">
-                    <ResponsiveContainer width="100%" height={300}>
-                      <BarChart data={chartData}>
+                    <ResponsiveContainer width="100%" height={320}>
+                      <BarChart data={chartData} margin={{ top: 10, right: 5, left: -25, bottom: 0 }}>
                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                        <XAxis dataKey="label" fontSize={12} stroke="#64748b" />
-                        <YAxis fontSize={12} stroke="#64748b" tickLine={false} axisLine={false} />
-                        <Tooltip content={<CustomTooltip />} />
-                        <Legend iconType="circle" />
+                        <XAxis dataKey="label" fontSize={11} stroke="#64748b" tickLine={false} />
+                        <YAxis fontSize={11} stroke="#64748b" tickLine={false} axisLine={false} />
+                        <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(0,0,0,0.01)' }} />
+                        <Legend iconType="circle" wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
                         {(selectedAssetId === 'all' ? assets : assets.filter(a => String(a.Id) === String(selectedAssetId))).map((asset, idx) => (
                           <React.Fragment key={asset.Id}>
                             <Bar dataKey={asset.FriendlyName} stackId="a" fill={ASSET_COLORS[idx % ASSET_COLORS.length]} radius={[3,3,0,0]} />
@@ -491,7 +508,7 @@ function App() {
             {activeTab === 'transactions' && (
               <div className="fullwidth-list-view">
                 <div className="list-title-header-row">
-                  <h3>Minden rögzített adat ({combinedList.length} tétel)</h3>
+                  <h3>Minden rögzített tranzakció ({combinedList.length} tétel)</h3>
                 </div>
                 <div className="modern-data-table-stack">
                   {combinedList.map((item: any, idx) => {
@@ -522,14 +539,12 @@ function App() {
               </div>
             )}
 
-            {/* ================= TAB 3: BEÁLLÍTÁSOK (MÁTRIX ÉS TÁBLÁK) ================= */}
+            {/* ================= TAB 3: BEÁLLÍTÁSOK (MÁTRIX) ================= */}
             {activeTab === 'settings' && (
               <div className="settings-split-dashboard">
-                
-                {/* 1. RÉSZ: ESZKÖZÖK ÉS AZOKNAK A KATEGÓRIÁI (MÁTRIX) */}
                 <div className="ui-widget-card grid-span-full">
                   <h3 className="section-title-accent">⚙️ Eszközökhöz tartozó kategóriák beállítása (Adatbázis mátrix)</h3>
-                  <p className="section-explain-text">Válaszd ki az eszközt a listából, majd jelöld be azokat a kategóriákat, amiket engedélyezni szeretnél hozzá. Így tiszta marad az adatbeviteli felület.</p>
+                  <p className="section-explain-text">Kattints egy eszközre a bal oldalon, majd a jobb oldali rácsban pipáld be azokat a kategóriákat, amik engedélyezettek hozzá.</p>
                   
                   <div className="matrix-control-wrapper">
                     <div className="matrix-left-asset-list">
@@ -567,29 +582,27 @@ function App() {
                           </div>
                         </>
                       ) : (
-                        <div className="empty-state-text">Válassz egy eszközt a bal oldali listából a kategóriák hozzárendeléséhez.</div>
+                        <div className="empty-state-text">Válassz egy eszközt a bal oldali listából.</div>
                       )}
                     </div>
                   </div>
                 </div>
 
-                {/* 2. RÉSZ: ÚJ ESZKÖZ LÉTREHOZÁSA */}
                 <div className="ui-widget-card">
-                  <h3 className="card-heading-clean">➕ Új eszköz / entitás hozzáadása</h3>
+                  <h3 className="card-heading-clean">➕ Új eszköz hozzáadása</h3>
                   <div className="vertical-form mt-2">
                     <select value={newAsset.category} onChange={(e) => setNewAsset({...newAsset, category: e.target.value})}>
                       <option value="property">🏠 Ingatlan</option>
                       <option value="car">🚗 Jármű</option>
-                      <option value="person">👤 Személy (Saját/Családtag)</option>
+                      <option value="person">👤 Személy</option>
                     </select>
-                    <input placeholder="Eszköz megnevezése (pl. Otthon, Toyota)" value={newAsset.friendlyName} onChange={(e) => setNewAsset({...newAsset, friendlyName: e.target.value})} />
-                    <button className="btn-action-primary" onClick={handleAssetSave}>Eszköz mentése</button>
+                    <input placeholder="Eszköz neve (pl. Albérlet, Ford)" value={newAsset.friendlyName} onChange={(e) => setNewAsset({...newAsset, friendlyName: e.target.value})} />
+                    <button className="btn-action-primary" onClick={handleAssetSave}>Mentés</button>
                   </div>
                 </div>
 
-                {/* 3. RÉSZ: HOGYAN OSZD MEG A CSALÁDDAL */}
                 <div className="ui-widget-card">
-                  <h3 className="card-heading-clean">🤝 Családi hozzáférések megosztása</h3>
+                  <h3 className="card-heading-clean">🤝 Megosztás partnerekkel</h3>
                   <div className="flex-input-group mt-2">
                     <input type="email" placeholder="partner@gmail.com" value={shareEmail} onChange={(e) => setShareEmail(e.target.value)} />
                     <button className="btn-add-plus" onClick={handleShare}>+</button>
@@ -598,12 +611,11 @@ function App() {
                     {myShares.map(s => (
                       <div key={s.id} className="share-list-row-item">
                         <span>{s.shared_with_email}</span>
-                        <button className="flat-delete-btn" onClick={() => revokeShare(s.id)}>visszavonás</button>
+                        <button className="flat-delete-btn" onClick={() => revokeShare(s.id)}>törlés</button>
                       </div>
                     ))}
                   </div>
                 </div>
-
               </div>
             )}
 
@@ -612,7 +624,6 @@ function App() {
           <div className="auth-wrapper-centered">
             <div className="auth-hero-card">
               <h1 className="auth-title">Üdvözöl a <span className="gradient-text">Rezsiapp 2.0</span></h1>
-              <p className="auth-subtitle">A háztartási rezsiköltségek és közüzemi óraállások letisztult, transzparens felülete.</p>
               <div className="auth-action-box">
                 <div className="google-signin-btn-container">
                   <GoogleLogin onSuccess={(res) => handleLoginSuccess(res.credential!)} />
@@ -622,7 +633,7 @@ function App() {
           </div>
         )}
 
-        {/* --- PRÉMIUM VILÁGOS SASS TÉMA (LIGHT ENGINE) --- */}
+        {/* --- PRÉMIUM LIGHT ENGINE + PRÉMIUM FORM DESIGN --- */}
         <style>{`
           :root {
             --bg-main: #f8fafc;
@@ -642,184 +653,147 @@ function App() {
             color: var(--text-main);
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             margin: 0; padding: 0;
-            font-size: 15px;
           }
 
           .app-container {
-            max-width: 1280px;
+            max-width: 1240px;
             margin: 0 auto;
             padding: 20px;
-            box-sizing: border-box;
             width: 100%;
+            box-sizing: border-box;
           }
 
-          /* --- MODERN PREMIUM HEADER --- */
+          /* --- PREMIUM APP HEADER --- */
           .app-header {
             background: var(--bg-card);
             border: 1px solid var(--border);
-            border-radius: 16px;
-            padding: 12px 24px;
-            margin-bottom: 24px;
+            border-radius: 14px;
+            padding: 12px 20px;
+            margin-bottom: 20px;
             display: flex;
             justify-content: space-between;
             align-items: center;
             flex-wrap: wrap;
-            gap: 16px;
-            box-shadow: 0 4px 6px -1px rgba(0,0,0,0.03);
+            box-shadow: 0 4px 6px -1px rgba(0,0,0,0.02);
           }
-
           .header-brand-section { display: flex; align-items: center; gap: 8px; }
-          .header-brand-section h2 { margin: 0; font-size: 1.2rem; font-weight: 800; letter-spacing: -0.5px; }
+          .header-brand-section h2 { margin: 0; font-size: 1.15rem; font-weight: 800; }
           .version-tag { color: var(--accent); font-size: 0.8rem; }
-
-          .header-navigation-tabs { display: flex; gap: 6px; }
+          .header-navigation-tabs { display: flex; gap: 4px; }
           .nav-tab-link {
-            background: transparent; border: none; padding: 10px 16px; font-size: 0.9rem;
-            font-weight: 600; color: var(--text-muted); cursor: pointer; border-radius: 10px;
-            transition: all 0.2s;
+            background: transparent; border: none; padding: 8px 14px; font-size: 0.85rem;
+            font-weight: 600; color: var(--text-muted); cursor: pointer; border-radius: 8px;
           }
           .nav-tab-link:hover { background: var(--bg-hover); color: var(--text-main); }
           .nav-tab-link.active { background: #e0e7ff; color: var(--accent); }
+          .header-user-badge { display: flex; align-items: center; gap: 10px; }
+          .user-round-avatar { width: 34px; height: 34px; border-radius: 50%; }
+          .logout-trigger-btn { background: transparent; border: none; cursor: pointer; font-size: 1.1rem; }
 
-          .header-user-badge { display: flex; align-items: center; gap: 12px; }
-          .user-round-avatar { width: 36px; height: 36px; border-radius: 50%; border: 2px solid #c7d2fe; }
-          .logout-trigger-btn { background: transparent; border: none; cursor: pointer; font-size: 1.2rem; }
-
-          /* --- RE-DESIGNED LAYOUT GRID --- */
-          .dashboard-layout-grid {
-            display: grid;
-            grid-template-columns: 1fr;
-            gap: 20px;
-          }
+          /* --- RESPONSIVE LAYOUT MATRIX --- */
+          .dashboard-layout-grid { display: grid; grid-template-columns: 1fr; gap: 20px; }
           @media (min-width: 992px) {
-            .dashboard-layout-grid { grid-template-columns: 320px 1fr; }
+            .dashboard-layout-grid { grid-template-columns: 300px 1fr; }
           }
-
           .sidebar-container { display: flex; flex-direction: column; gap: 20px; }
           .main-viewport-pane { min-width: 0; display: flex; flex-direction: column; gap: 20px; }
+          .ui-widget-card { background: var(--bg-card); border-radius: 14px; padding: 18px; border: 1px solid var(--border); }
+          .card-heading-clean { margin: 0 0 14px 0; font-size: 0.95rem; font-weight: 700; }
+          .input-label-flat { font-size: 0.75rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; margin-bottom: 6px; display: block; }
 
-          /* --- CARDS & WIDGETS --- */
-          .ui-widget-card {
-            background: var(--bg-card); border-radius: 16px; padding: 20px;
-            border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.02);
-          }
-          .card-heading-clean { margin: 0 0 16px 0; font-size: 1rem; font-weight: 700; }
-          .input-label-flat { font-size: 0.8rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; margin-bottom: 8px; display: block; }
-
-          /* --- FORMS --- */
+          /* --- MODERN SELECT DROPDOWNS (ANTI-90S ENGINE) --- */
           .form-control-select, .vertical-form select, .vertical-form input, .flex-input-group input {
-            width: 100%; padding: 12px; background: #f8fafc; border: 1px solid var(--border);
-            border-radius: 10px; color: var(--text-main); font-size: 16px !important; box-sizing: border-box;
-            outline: none; height: 46px;
+            width: 100%; padding: 10px 14px; background: #f8fafc; border: 1px solid var(--border);
+            border-radius: 8px; color: var(--text-main); font-size: 15px !important; box-sizing: border-box;
+            outline: none; height: 44px; transition: all 0.2s ease-in-out;
+            appearance: none; -webkit-appearance: none;
+          }
+          /* Custom vector arrow design dropdowns */
+          .form-control-select, .vertical-form select {
+            background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
+            background-repeat: no-repeat; background-position: right 14px center; background-size: 15px;
+            padding-right: 38px !important; cursor: pointer;
+          }
+          .form-control-select:focus, .vertical-form select:focus, .vertical-form input:focus {
+            border-color: var(--accent); background-color: #ffffff; box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.08);
           }
           .vertical-form { display: flex; flex-direction: column; gap: 10px; }
 
-          .mode-toggle-pill { display: flex; background: #f1f5f9; padding: 4px; border-radius: 10px; gap: 4px; margin-bottom: 12px; }
-          .pill-item { flex: 1; background: transparent; border: none; padding: 8px; font-size: 0.85rem; font-weight: 600; color: var(--text-muted); cursor: pointer; border-radius: 8px; }
-          .pill-item.active { background: white; color: var(--text-main); box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+          /* --- TOGGLES & PILLS --- */
+          .mode-toggle-pill { display: flex; background: #f1f5f9; padding: 4px; border-radius: 8px; gap: 4px; margin-bottom: 12px; }
+          .pill-item { flex: 1; background: transparent; border: none; padding: 8px; font-size: 0.8rem; font-weight: 600; color: var(--text-muted); cursor: pointer; border-radius: 6px; }
+          .pill-item.active { background: white; color: var(--text-main); box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
+          .btn-submit-form { background: var(--emerald); color: white; border: none; padding: 12px; border-radius: 8px; font-weight: 700; cursor: pointer; width: 100%; }
 
-          .btn-action-primary {
-            background: var(--accent); color: white; border: none; padding: 12px; border-radius: 10px;
-            font-weight: 700; font-size: 0.95rem; cursor: pointer; transition: background 0.2s;
-          }
-          .btn-action-primary:hover { background: var(--accent-hover); }
-
-          .flex-input-group { display: flex; gap: 8px; }
-          .btn-add-plus { background: var(--accent); border: none; color: white; width: 46px; height: 46px; border-radius: 10px; font-size: 1.2rem; cursor: pointer; }
-
-          /* --- FIX CHIP GRID (NINCS TÖBBÉ ELVÁGVA) --- */
-          .grid-wrapping-chips {
-            display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px;
-          }
+          /* --- CHIPS WRAPPING GRID --- */
+          .grid-wrapping-chips { display: flex; flex-wrap: wrap; gap: 6px; }
           .grid-chip-item {
             background: #f1f5f9; border: 1px solid var(--border); color: var(--text-main);
-            padding: 10px 14px; border-radius: 12px; font-size: 0.85rem; font-weight: 600; cursor: pointer;
-            display: inline-flex; align-items: center; gap: 6px; transition: all 0.2s;
+            padding: 8px 12px; border-radius: 8px; font-size: 0.8rem; font-weight: 600; cursor: pointer;
+            display: inline-flex; align-items: center; gap: 4px; transition: all 0.15s;
           }
           .grid-chip-item:hover { background: #e2e8f0; }
 
-          .chart-filter-controls-row { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-top: 10px; padding-top: 12px; border-top: 1px solid var(--border); }
+          /* --- FILTER TOOLBAR & DATE RANGE PANEL --- */
+          .chart-filter-controls-row {
+            display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;
+            margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border);
+          }
+          .controls-left-side-modes { display: flex; gap: 8px; }
+          .controls-right-side-dates { display: flex; align-items: center; gap: 8px; }
+          .styled-range-select { height: 34px; padding: 4px 30px 4px 12px; font-size: 0.8rem !important; border-radius: 20px; width: auto; background-position: right 10px center; }
+          
+          .custom-range-inputs-wrapper { display: flex; align-items: center; gap: 4px; background: #f1f5f9; padding: 3px 8px; border-radius: 20px; border: 1px solid var(--border); }
+          .small-date-input { background: transparent; border: none; font-size: 0.8rem; outline: none; color: var(--text-main); cursor: pointer; font-family: inherit; }
+          .date-separator { color: var(--text-muted); font-size: 0.8rem; padding: 0 2px; }
+
           .compact-btn-group { display: flex; background: #f1f5f9; padding: 3px; border-radius: 20px; border: 1px solid var(--border); }
-          .compact-btn-group button { background: transparent; border: none; color: var(--text-muted); padding: 5px 12px; border-radius: 20px; font-size: 0.75rem; font-weight: 700; cursor: pointer; }
+          .compact-btn-group button { background: transparent; border: none; color: var(--text-muted); padding: 4px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: 700; cursor: pointer; }
           .compact-btn-group button.active { background: white; color: var(--text-main); box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
 
-          /* ================= MÁTRIX BEÁLLÍTÁSOK MENÜ ================= */
-          .settings-split-dashboard {
-            display: grid; grid-template-columns: 1fr; gap: 20px; text-align: left;
-          }
-          @media (min-width: 768px) {
-            .settings-split-dashboard { grid-template-columns: 1fr 1fr; }
-          }
+          /* ================= SETTINGS MATRIX VIEW ================= */
+          .settings-split-dashboard { display: grid; grid-template-columns: 1fr; gap: 20px; text-align: left; }
+          @media (min-width: 768px) { .settings-split-dashboard { grid-template-columns: 1fr 1fr; } }
           .grid-span-full { grid-column: 1 / -1; }
-          .section-title-accent { margin-top: 0; font-size: 1.2rem; font-weight: 800; }
-          .section-explain-text { font-size: 0.9rem; color: var(--text-muted); margin-bottom: 20px; line-height: 1.4; }
-
-          .matrix-control-wrapper {
-            display: grid; grid-template-columns: 1fr; gap: 20px; border: 1px solid var(--border); border-radius: 12px; overflow: hidden;
-          }
-          @media (min-width: 768px) {
-            .matrix-control-wrapper { grid-template-columns: 240px 1fr; }
-          }
-
-          .matrix-left-asset-list { background: #f8fafc; border-right: 1px solid var(--border); padding: 12px; display: flex; flex-direction: column; gap: 6px; }
-          .matrix-asset-sidebar-item {
-            display: flex; flex-direction: column; text-align: left; padding: 12px; border: 1px solid transparent; background: transparent; border-radius: 8px; cursor: pointer;
-          }
+          .section-title-accent { margin: 0; font-size: 1.1rem; font-weight: 800; }
+          .section-explain-text { font-size: 0.85rem; color: var(--text-muted); margin-bottom: 16px; }
+          .matrix-control-wrapper { display: grid; grid-template-columns: 1fr; gap: 20px; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+          @media (min-width: 768px) { .matrix-control-wrapper { grid-template-columns: 220px 1fr; } }
+          .matrix-left-asset-list { background: #f8fafc; border-right: 1px solid var(--border); padding: 10px; display: flex; flex-direction: column; gap: 4px; }
+          .matrix-asset-sidebar-item { display: flex; flex-direction: column; text-align: left; padding: 10px; border: 1px solid transparent; background: transparent; border-radius: 8px; cursor: pointer; }
           .matrix-asset-sidebar-item:hover { background: #e2e8f0; }
-          .matrix-asset-sidebar-item.active { background: white; border-color: var(--border); box-shadow: 0 2px 4px rgba(0,0,0,0.03); }
-          .matrix-asset-sidebar-item strong { font-size: 0.95rem; }
-          .matrix-asset-sidebar-item small { color: var(--text-muted); font-size: 0.75rem; margin-top: 2px; }
-
-          .matrix-right-checkbox-panel { padding: 20px; background: white; }
-          .matrix-right-checkbox-panel h4 { margin-top: 0; margin-bottom: 16px; font-size: 1rem; }
-          .highlight-blue { color: var(--accent); font-weight: 700; }
-
-          .checkbox-toggles-flex-grid {
-            display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px;
-          }
-          .checkbox-matrix-tile {
-            display: flex; align-items: center; gap: 10px; padding: 12px; background: #f8fafc;
-            border: 1px solid var(--border); border-radius: 10px; cursor: pointer; transition: all 0.2s;
-          }
-          .checkbox-matrix-tile input { width: 18px; height: 18px; cursor: pointer; margin: 0; }
+          .matrix-asset-sidebar-item.active { background: white; border-color: var(--border); box-shadow: 0 2px 4px rgba(0,0,0,0.02); }
+          .matrix-asset-sidebar-item small { color: var(--text-muted); font-size: 0.7rem; }
+          .matrix-right-checkbox-panel { padding: 16px; background: white; }
+          .checkbox-toggles-flex-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+          .checkbox-matrix-tile { display: flex; align-items: center; gap: 8px; padding: 10px; background: #f8fafc; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; }
           .checkbox-matrix-tile.selected { background: #e0e7ff; border-color: #a5b4fc; font-weight: 600; }
-          .tile-icon { font-size: 1.1rem; }
-          .tile-name { font-size: 0.85rem; }
+          .scrollable-list { max-height: 350px; overflow-y: auto; }
 
-          /* --- TRANZAKCIÓS LISTA (DEDIKÁLT TAB) --- */
+          /* --- TRANZAKCIÓS DEDIKÁLT LISTA --- */
           .fullwidth-list-view { text-align: left; }
-          .list-title-header-row { margin-bottom: 16px; }
-          .modern-data-table-stack { display: flex; flex-direction: column; gap: 8px; }
-          .table-row-card {
-            background: white; border: 1px solid var(--border); border-radius: 12px; padding: 14px 20px;
-            display: flex; justify-content: space-between; align-items: center; gap: 15px;
-          }
-          .row-left-info { display: flex; align-items: center; gap: 16px; }
-          .row-badge-type { background: #f1f5f9; padding: 4px 10px; border-radius: 8px; font-size: 0.75rem; font-weight: 700; color: var(--text-muted); }
-          .row-main-title { font-weight: 700; font-size: 0.95rem; }
-          .row-sub-title { font-size: 0.8rem; color: var(--text-muted); margin-top: 2px; }
-          .row-right-actions { display: flex; align-items: center; gap: 16px; }
-          .row-value-text { font-weight: 700; font-size: 1rem; color: var(--text-main); }
+          .modern-data-table-stack { display: flex; flex-direction: column; gap: 6px; }
+          .table-row-card { background: white; border: 1px solid var(--border); border-radius: 10px; padding: 10px 16px; display: flex; justify-content: space-between; align-items: center; }
+          .row-left-info { display: flex; align-items: center; gap: 12px; }
+          .row-badge-type { background: #f1f5f9; padding: 3px 8px; border-radius: 6px; font-size: 0.7rem; font-weight: 700; color: var(--text-muted); }
+          .row-main-title { font-weight: 700; font-size: 0.9rem; }
+          .row-sub-title { font-size: 0.75rem; color: var(--text-muted); }
+          .row-right-actions { display: flex; align-items: center; gap: 12px; }
+          .row-value-text { font-weight: 700; font-size: 0.95rem; }
           .row-value-text.green { color: var(--emerald); }
-          .row-buttons-trigger button { background: #f1f5f9; border: 1px solid var(--border); padding: 6px; border-radius: 6px; cursor: pointer; margin-left: 4px; }
+          .row-buttons-trigger button { background: #f1f5f9; border: 1px solid var(--border); padding: 4px 8px; border-radius: 6px; cursor: pointer; }
 
-          /* --- MEGOSZTÁSOK LISTÁJA --- */
-          .share-list-row-item { display: flex; justify-content: space-between; padding: 8px 12px; background: #f8fafc; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 6px; font-size: 0.85rem; }
-          .flat-delete-btn { background: transparent; border: none; color: var(--rose); cursor: pointer; font-size: 0.8rem; }
-
-          /* --- CUSTOM TOOLTIP --- */
-          .custom-tooltip-box { background: white; padding: 12px; border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); font-size: 13px; z-index: 50; }
-          .tooltip-title { margin: 0 0 6px 0; font-weight: bold; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
-          .tooltip-row { display: flex; justify-content: space-between; gap: 16px; }
+          .custom-tooltip-box { background: white; padding: 10px; border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 10px rgba(0,0,0,0.06); font-size: 12px; }
+          .tooltip-title { margin: 0 0 4px 0; font-weight: bold; border-bottom: 1px solid var(--border); padding-bottom: 2px; }
+          .tooltip-row { display: flex; justify-content: space-between; gap: 12px; }
           .font-emerald { color: var(--emerald); }
-
-          /* --- AUTH CARD --- */
-          .auth-wrapper-centered { display: flex; justify-content: center; align-items: center; min-height: 60vh; }
-          .auth-hero-card { background: white; border: 1px solid var(--border); max-width: 420px; padding: 32px; border-radius: 20px; text-align: center; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.05); }
-          .auth-title { font-size: 1.6rem; margin-top: 0; }
-          .auth-subtitle { color: var(--text-muted); font-size: 0.9rem; line-height: 1.4; }
-          .auth-action-box { background: #f8fafc; padding: 20px; border-radius: 12px; border: 1px solid var(--border); margin-top: 20px; }
-          .google-signin-btn-container { display: flex; justify-content: center; }
+          .flex-input-group { display: flex; gap: 6px; }
+          .btn-add-plus { background: var(--accent); border: none; color: white; width: 44px; height: 44px; border-radius: 8px; font-size: 1.1rem; cursor: pointer; }
+          .share-list-row-item { display: flex; justify-content: space-between; padding: 8px; background: #f8fafc; border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem; }
+          .flat-delete-btn { background: transparent; border: none; color: var(--rose); cursor: pointer; }
+          .auth-wrapper-centered { display: flex; justify-content: center; align-items: center; min-height: 50vh; }
+          .auth-hero-card { background: white; border: 1px solid var(--border); padding: 30px; border-radius: 16px; }
+          .gradient-text { color: var(--accent); font-weight: 800; }
         `}</style>
       </div>
     </GoogleOAuthProvider>
