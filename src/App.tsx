@@ -13,6 +13,7 @@ const ASSET_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#e
 const ADMIN_EMAILS = ['kovari.rudolf@gmail.com'];
 
 function App() {
+  // --- MINDEN ÁLLAPOT (STATE) EXPLICIT DEKLARÁCIÓJA ---
   const [user, setUser] = useState<any>(null);
   const [records, setRecords] = useState<any[]>([]);
   const [invoices, setInvoices] = useState<any[]>([]);
@@ -23,7 +24,15 @@ function App() {
   const [viewingUserId, setViewingUserId] = useState<string | null>(null);
   const [selectedAssetId, setSelectedAssetId] = useState<string>('all');
   
+  // Navigációs állapot (dashboard / transactions / settings)
   const [activeTab, setActiveTab] = useState<'dashboard' | 'transactions' | 'settings'>('dashboard');
+  
+  // CRITICAL FIX: Tranzakciók oldali szűrők állapotai (amik az előbb kimaradtak)
+  const [txSearch, setTxSearch] = useState('');
+  const [txAssetFilter, setTxAssetFilter] = useState('all');
+  const [txCategoryFilter, setTxCategoryFilter] = useState('all');
+  
+  // Kijelölt eszköz a beállítások menüpont alatti mátrixhoz
   const [matrixSelectedAssetId, setMatrixSelectedAssetId] = useState<string>('');
 
   const [recordMode, setRecordMode] = useState<'meter' | 'invoice'>('meter');
@@ -72,99 +81,7 @@ function App() {
     }
   }, [selectedAssetId, assetCategoryMap]);
 
-  // --- API KAPCSOLATOK ---
-  const handleToggleCategoryForAsset = async (assetId: string, categoryName: string) => {
-    if (isReadOnly) return;
-    try {
-      const res = await fetch(`${BACKEND_URL}/api/asset-categories/toggle`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${user.token}` },
-        body: JSON.stringify({ assetId: parseInt(assetId), categoryName })
-      });
-      if (res.ok) {
-        const currentAllowed = assetCategoryMap[assetId] || [];
-        const updated = currentAllowed.includes(categoryName)
-          ? currentAllowed.filter(c => c !== categoryName)
-          : [...currentAllowed, categoryName];
-        setAssetCategoryMap({ ...assetCategoryMap, [assetId]: updated });
-      }
-    } catch (e) { console.error(e); }
-  };
-
-  const fetchMyShares = async (token: string) => {
-    try {
-      const res = await fetch(`${BACKEND_URL}/api/shares/owned`, { headers: { 'Authorization': `Bearer ${token}` } });
-      if (res.ok) setMyShares(await res.json());
-    } catch (e) { console.error(e); }
-  };
-
-  const fetchSharedAccounts = async (token: string) => {
-    try {
-      const res = await fetch(`${BACKEND_URL}/api/shares/me`, { headers: { 'Authorization': `Bearer ${token}` } });
-      if (res.ok) setSharedUsers(await res.json());
-    } catch (e) { console.error(e); }
-  };
-
-  const fetchAll = async (token: string, targetId?: string) => {
-    const id = targetId || viewingUserId || user?.sub;
-    if (!id || !token) return;
-    try {
-      const headers = { 'Authorization': `Bearer ${token}` };
-      const [recRes, invRes, assetRes, catRes, acRes] = await Promise.all([
-        fetch(`${BACKEND_URL}/api/records?userId=${id}`, { headers }),
-        fetch(`${BACKEND_URL}/api/invoices?userId=${id}`, { headers }),
-        fetch(`${BACKEND_URL}/api/assets?userId=${id}`, { headers }),
-        fetch(`${BACKEND_URL}/api/categories?userId=${id}`, { headers }),
-        fetch(`${BACKEND_URL}/api/asset-categories?userId=${id}`, { headers })
-      ]);
-      if (recRes.status === 401) return forceLogout();
-      
-      const recData = await recRes.json();
-      const invData = await invRes.json();
-      const astData = await assetRes.json();
-      const catData = await catRes.json();
-      const acData = await acRes.json();
-      
-      setRecords(Array.isArray(recData) ? recData : []);
-      setInvoices(Array.isArray(invData) ? invData : []);
-      setAssets(Array.isArray(astData) ? astData : []);
-      setCategories(Array.isArray(catData) ? catData : []);
-
-      if (Array.isArray(acData)) {
-        const map: { [key: string]: string[] } = {};
-        acData.forEach((row: any) => {
-          const aId = String(row.asset_id);
-          if (!map[aId]) map[aId] = [];
-          map[aId].push(row.category_name);
-        });
-        setAssetCategoryMap(map);
-      }
-    } catch (err) { console.error(err); }
-  };
-
-  const handleLoginSuccess = async (token: string) => {
-    try {
-      const decoded: any = jwtDecode(token);
-      setUser({ ...decoded, token });
-      setViewingUserId(decoded.sub);
-      localStorage.setItem('userToken', token);
-      
-      fetchAll(token, decoded.sub);
-      fetchSharedAccounts(token);
-      fetchMyShares(token);
-
-      await fetch(`${BACKEND_URL}/api/login-sync`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
-      });
-    } catch (e) { forceLogout(); }
-  };
-
-  const forceLogout = () => {
-    googleLogout(); setUser(null); setRecords([]); setInvoices([]); setAssets([]); 
-    setCategories([]); setSharedUsers([]); setMyShares([]); localStorage.removeItem('userToken');
-  };
-
+  // --- RENDELÉSI SEGÉDFÜGGVÉNYEK ---
   const getAllowedTypes = (assetId: string) => {
     const allCatNames = categories.map(c => c.Name);
     if (!assetId || assetId === 'all') return allCatNames;
@@ -181,7 +98,7 @@ function App() {
     return categories.filter(c => allowedNames.includes(c.Name));
   }, [categories, selectedAssetId, assetCategoryMap]);
 
-  // --- SAFE INITIALIZATION OF USEMEMOS (No ReferenceErrors) ---
+  // --- MEMOIZÁLT LISTÁK ÉS GRAFIKONOK (Kizárólag a változók deklarálása után) ---
   const combinedList = useMemo(() => {
     return [
       ...(filter === 'Összes' || filter === 'Összes kiadás' ? [] : records.filter(r => (selectedAssetId === 'all' || String(r.AssetId) === String(selectedAssetId)) && r.Type === filter).map(r => ({ ...r, lType: 'meter', d: r.FormattedDate }))),
@@ -264,6 +181,7 @@ function App() {
       : (chartRange === 'all' ? sorted : sorted.slice(-chartRange));
   }, [records, invoices, assets, filter, displayMode, viewMode, selectedAssetId, chartRange, customStartDate, customEndDate]);
 
+  // --- DIAGRAM TOOLTIP ---
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
       const unit = displayMode === 'cost' ? 'Ft' : '';
@@ -273,8 +191,8 @@ function App() {
           <div className="custom-tooltip-box">
             <p className="tooltip-title">{label}</p>
             {payload.map((entry: any, index: number) => (
-              <div key={index} className="tooltip-row">
-                <span style={{ color: entry.color }}>{entry.name}:</span>
+              <div key={index} style={{ color: entry.color }} className="tooltip-row">
+                <span>{entry.name}:</span>
                 <span className="tooltip-val">{Number(entry.value).toLocaleString()} {unit}</span>
               </div>
             ))}
@@ -331,6 +249,27 @@ function App() {
     return null;
   };
 
+  // --- INTERAKCIÓS METÓDUSOK ---
+  const handleToggleCategoryForAsset = async (assetId: string, categoryName: string) => {
+    if (isReadOnly) return;
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/asset-categories/toggle`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${user.token}` },
+        body: JSON.stringify({ assetId: parseInt(assetId), categoryName })
+      });
+      if (res.ok) {
+        const currentAllowed = assetCategoryMap[assetId] || [];
+        const updated = currentAllowed.includes(categoryName)
+          ? currentAllowed.filter(c => c !== categoryName)
+          : [...currentAllowed, categoryName];
+        setAssetCategoryMap({ ...assetCategoryMap, [assetId]: updated });
+      } else {
+        alert("Szerver hiba történt a mentéskor.");
+      }
+    } catch (e) { console.error(e); }
+  };
+
   const handleSave = async () => {
     if (!targetAssetId || targetAssetId === 'all' || !value) return alert("Hiányzó adatok!");
     const currentCat = categories.find(c => c.Name === type);
@@ -367,9 +306,6 @@ function App() {
       setEditingCategoryId(null);
       setNewCategory({ name: '', icon: '📄', type: 'both', isPublic: false });
       fetchAll(user.token);
-    } else {
-      const data = await res.json();
-      alert(data.error || "Hiba történt a kategória mentésekor.");
     }
   };
 
@@ -379,10 +315,6 @@ function App() {
       method: 'DELETE', headers: { 'Authorization': `Bearer ${user.token}` }
     });
     if (res.ok) fetchAll(user.token);
-    else {
-      const data = await res.json();
-      alert(data.error || "Hiba történt a törlés során.");
-    }
   };
 
   const handleShare = async () => {
@@ -392,30 +324,6 @@ function App() {
       body: JSON.stringify({ sharedWithEmail: shareEmail })
     });
     if (res.ok) { setShareEmail(''); fetchMyShares(user.token); }
-  };
-
-  const getIcon = (t: string) => {
-    if (t === 'Összes') return '📊'; if (t === 'Összes kiadás') return '📉';
-    const cat = categories.find(c => c.Name === t);
-    return cat ? cat.Icon : '📄';
-  };
-
-  const getColor = (t: string = filter) => {
-    if (displayMode === 'cost' && t !== 'Összes' && t !== 'Összes kiadás') return '#10b981';
-    if (t === 'Összes') return '#4f46e5'; if (t === 'Összes kiadás') return '#ef4444';
-    switch(t) {
-      case 'Áram': return '#f59e0b';
-      case 'Víz': return '#06b6d4';
-      case 'Gáz': return '#f97316';
-      case 'Üzemanyag': return '#8b5cf6';
-      case 'Internet': return '#ec4899';
-      case 'Szemétszállítás': return '#64748b';
-      case 'Albérlet': return '#db2777';
-      default: 
-        let hash = 0;
-        for (let i = 0; i < t.length; i++) hash = t.charCodeAt(i) + ((hash << 5) - hash);
-        return `hsl(${hash % 360}, 65%, 55%)`;
-    }
   };
 
   const handleEditRecord = (item: any) => {
@@ -439,11 +347,34 @@ function App() {
     setValue('');
   };
 
+  const getIcon = (t: string) => {
+    if (t === 'Összes') return '📊'; if (t === 'Összes kiadás') return '📉';
+    return categories.find(c => c.Name === t)?.Icon || '📄';
+  };
+
+  const getColor = (t: string = filter) => {
+    if (displayMode === 'cost' && t !== 'Összes' && t !== 'Összes kiadás') return '#10b981';
+    if (t === 'Összes') return '#4f46e5'; if (t === 'Összes kiadás') return '#ef4444';
+    switch(t) {
+      case 'Áram': return '#f59e0b';
+      case 'Víz': return '#06b6d4';
+      case 'Gáz': return '#f97316';
+      case 'Üzemanyag': return '#8b5cf6';
+      case 'Internet': return '#ec4899';
+      case 'Szemétszállítás': return '#64748b';
+      case 'Albérlet': return '#db2777';
+      default: 
+        let hash = 0;
+        for (let i = 0; i < t.length; i++) hash = t.charCodeAt(i) + ((hash << 5) - hash);
+        return `hsl(${hash % 360}, 65%, 55%)`;
+    }
+  };
+
   return (
     <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
       <div className="app-container">
         
-        {/* --- HEADER --- */}
+        {/* --- APP HEADER --- */}
         <header className="app-header">
           <div className="header-brand-section">
             <span className="brand-icon">⚡</span>
@@ -682,7 +613,7 @@ function App() {
                   </div>
                 </div>
 
-                {/* ÚJ KATEGÓRIA LÉTREHOZÁSA ÉS LISTA (Privát / Publikus kezeléssel) */}
+                {/* ÚJ KATEGÓRIA SZEKCIÓ */}
                 <div className="ui-widget-card">
                   <h3 className="card-heading-clean">{editingCategoryId ? "✏️ Kategória szerkesztése" : "⚙️ Új kategória hozzáadása"}</h3>
                   <div className="vertical-form mt-2">
@@ -795,7 +726,7 @@ function App() {
           </div>
         )}
 
-        {/* --- APPS LIGHT-THEME ENGINE --- */}
+        {/* --- STYLES ENGINE --- */}
         <style>{`
           :root {
             --bg-main: #f8fafc;
@@ -911,7 +842,7 @@ function App() {
           .grid-wrapping-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
           .grid-chip-item {
             background: #f1f5f9; border: 1px solid var(--border); color: var(--text-main);
-            padding: 10px 14px; border-radius: 12px; font-size: 0.85rem; font-weight: 600; cursor: pointer;
+            padding: 8px 12px; border-radius: 8px; font-size: 0.85rem; font-weight: 600; cursor: pointer;
             display: inline-flex; align-items: center; gap: 6px; transition: all 0.2s;
           }
           .grid-chip-item:hover { background: #e2e8f0; }
