@@ -23,15 +23,7 @@ function App() {
   const [viewingUserId, setViewingUserId] = useState<string | null>(null);
   const [selectedAssetId, setSelectedAssetId] = useState<string>('all');
   
-  // Navigációs állapot (dashboard / transactions / settings)
   const [activeTab, setActiveTab] = useState<'dashboard' | 'transactions' | 'settings'>('dashboard');
-  
-  // Tranzakciók oldali szűrők állapotai
-  const [txSearch, setTxSearch] = useState('');
-  const [txAssetFilter, setTxAssetFilter] = useState('all');
-  const [txCategoryFilter, setTxCategoryFilter] = useState('all');
-  
-  // Kijelölt eszköz a beállítások menüpont alatti mátrixhoz
   const [matrixSelectedAssetId, setMatrixSelectedAssetId] = useState<string>('');
 
   const [recordMode, setRecordMode] = useState<'meter' | 'invoice'>('meter');
@@ -64,6 +56,7 @@ function App() {
 
   const [assetCategoryMap, setAssetCategoryMap] = useState<{ [key: string]: string[] }>({});
 
+  const isAdmin = user && ADMIN_EMAILS.includes(user.email);
   const isReadOnly = viewingUserId !== null && viewingUserId !== user?.sub;
 
   useEffect(() => {
@@ -72,7 +65,6 @@ function App() {
     }
   }, [assets]);
 
-  // Biztonsági szűrő: Ha az eszközhöz nem tartozik a kiválasztott főkategória-chip, állítsuk vissza Összesre
   useEffect(() => {
     const allowed = getAllowedTypes(selectedAssetId);
     if (filter !== 'Összes' && filter !== 'Összes kiadás' && !allowed.includes(filter)) {
@@ -95,12 +87,8 @@ function App() {
           ? currentAllowed.filter(c => c !== categoryName)
           : [...currentAllowed, categoryName];
         setAssetCategoryMap({ ...assetCategoryMap, [assetId]: updated });
-      } else {
-        alert("Szerver hiba a mátrix mentésekor. Ellenőrizd a kapcsolótáblát az adatbázisban!");
       }
-    } catch (e) {
-      console.error(e);
-    }
+    } catch (e) { console.error(e); }
   };
 
   const fetchMyShares = async (token: string) => {
@@ -177,42 +165,23 @@ function App() {
     setCategories([]); setSharedUsers([]); setMyShares([]); localStorage.removeItem('userToken');
   };
 
-  useEffect(() => {
-    const savedToken = localStorage.getItem('userToken');
-    if (savedToken) handleLoginSuccess(savedToken);
-  }, []);
-
-  // Intelligens kategória engedélyezési szűrő az eszközhöz (Fallback logikával)
   const getAllowedTypes = (assetId: string) => {
     const allCatNames = categories.map(c => c.Name);
     if (!assetId || assetId === 'all') return allCatNames;
-    
     if (assetCategoryMap[assetId] && assetCategoryMap[assetId].length > 0) {
       return assetCategoryMap[assetId];
     }
-    
     const asset = assets.find((a: any) => String(a.Id) === String(assetId));
-    if (asset) {
-      if (asset.Category === 'car') {
-        return allCatNames.filter(name => ['Üzemanyag', 'Biztosítás', 'Szerviz', 'Egyéb'].includes(name));
-      }
-      if (asset.Category === 'property') {
-        return allCatNames.filter(name => !['Üzemanyag', 'Fizetés', 'Túrájó', 'Fotózás'].includes(name));
-      }
-      if (asset.Category === 'person') {
-        return allCatNames.filter(name => ['Fizetés', 'Túrájó', 'Fotózás', 'Mobiltelefon', 'Internet', 'Egyéb'].includes(name));
-      }
-    }
+    if (asset?.Category === 'car') return allCatNames.includes('Üzemanyag') ? ['Üzemanyag'] : allCatNames;
     return allCatNames;
   };
 
-  // Dinamikusan szűrt kategóriák a grafikon feletti chipekhez
   const visibleCategories = useMemo(() => {
     const allowedNames = getAllowedTypes(selectedAssetId);
     return categories.filter(c => allowedNames.includes(c.Name));
   }, [categories, selectedAssetId, assetCategoryMap]);
 
-  // --- 1. ALAP TRANZAKCIÓS LISTA ÖSSZEÁLLÍTÁSA (Függőségek rendezve és optimalizálva) ---
+  // --- SAFE INITIALIZATION OF USEMEMOS (No ReferenceErrors) ---
   const combinedList = useMemo(() => {
     return [
       ...(filter === 'Összes' || filter === 'Összes kiadás' ? [] : records.filter(r => (selectedAssetId === 'all' || String(r.AssetId) === String(selectedAssetId)) && r.Type === filter).map(r => ({ ...r, lType: 'meter', d: r.FormattedDate }))),
@@ -225,7 +194,6 @@ function App() {
     ].sort((a, b) => new Date(b.d).getTime() - new Date(a.d).getTime());
   }, [records, invoices, selectedAssetId, filter, categories]);
 
-  // --- 2. KUTATÁS ÉS SZŰRÉS A TRANZAKCIÓK LAPFÜLÖN (Szigorúan a combinedList deklarációja után) ---
   const filteredCombinedList = useMemo(() => {
     return combinedList.filter((item: any) => {
       const asset = assets.find(a => String(a.Id) === String(item.AssetId));
@@ -244,7 +212,6 @@ function App() {
     });
   }, [combinedList, txSearch, txAssetFilter, txCategoryFilter, assets]);
 
-  // --- GRAFIKON ADATOK GENERÁLÁSA ---
   const chartData = useMemo(() => {
     const dataMap: { [key: string]: any } = {};
     const fRec = records.filter((r: any) => selectedAssetId === 'all' || String(r.AssetId) === String(selectedAssetId));
@@ -297,7 +264,6 @@ function App() {
       : (chartRange === 'all' ? sorted : sorted.slice(-chartRange));
   }, [records, invoices, assets, filter, displayMode, viewMode, selectedAssetId, chartRange, customStartDate, customEndDate]);
 
-  // --- INTUITÍV GRAFIKON TOOLTIP ---
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
       const unit = displayMode === 'cost' ? 'Ft' : '';
@@ -365,7 +331,6 @@ function App() {
     return null;
   };
 
-  // --- FUNKCIÓK RÖGZÍTÉSE ---
   const handleSave = async () => {
     if (!targetAssetId || targetAssetId === 'all' || !value) return alert("Hiányzó adatok!");
     const currentCat = categories.find(c => c.Name === type);
@@ -388,6 +353,36 @@ function App() {
       body: JSON.stringify(newAsset)
     });
     if (res.ok) { setNewAsset({ category: 'property', friendlyName: '', city: '', street: '', houseNumber: '', plateNumber: '', fuelType: 'Benzin', area: '' }); fetchAll(user.token); }
+  };
+
+  const handleCategorySave = async () => {
+    if (!newCategory.name) return alert("Kategória név kötelező!");
+    const url = editingCategoryId ? `${BACKEND_URL}/api/categories/${editingCategoryId}` : `${BACKEND_URL}/api/categories`;
+    const res = await fetch(url, {
+      method: editingCategoryId ? 'PUT' : 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${user.token}` },
+      body: JSON.stringify(newCategory)
+    });
+    if (res.ok) {
+      setEditingCategoryId(null);
+      setNewCategory({ name: '', icon: '📄', type: 'both', isPublic: false });
+      fetchAll(user.token);
+    } else {
+      const data = await res.json();
+      alert(data.error || "Hiba történt a kategória mentésekor.");
+    }
+  };
+
+  const handleCategoryDelete = async (id: number) => {
+    if (!window.confirm("Biztosan törlöd ezt a kategóriát?")) return;
+    const res = await fetch(`${BACKEND_URL}/api/categories/${id}`, {
+      method: 'DELETE', headers: { 'Authorization': `Bearer ${user.token}` }
+    });
+    if (res.ok) fetchAll(user.token);
+    else {
+      const data = await res.json();
+      alert(data.error || "Hiba történt a törlés során.");
+    }
   };
 
   const handleShare = async () => {
@@ -448,7 +443,7 @@ function App() {
     <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
       <div className="app-container">
         
-        {/* --- HEADER SÁV --- */}
+        {/* --- HEADER --- */}
         <header className="app-header">
           <div className="header-brand-section">
             <span className="brand-icon">⚡</span>
@@ -457,7 +452,7 @@ function App() {
           
           {user && (
             <nav className="header-navigation-tabs">
-              <button className={`nav-tab-link ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveTab('dashboard')}>📊 Kimutatások</button>
+              <button className={`nav-tab-link ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveTab('dashboard')}>📊 Műszerfal</button>
               <button className={`nav-tab-link ${activeTab === 'transactions' ? 'active' : ''}`} onClick={() => setActiveTab('transactions')}>📜 Tranzakciók</button>
               <button className={`nav-tab-link ${activeTab === 'settings' ? 'active' : ''}`} onClick={() => setActiveTab('settings')}>⚙️ Beállítások & Eszközök</button>
             </nav>
@@ -477,8 +472,6 @@ function App() {
             {/* ================= TAB 1: MŰSZERFAL ================= */}
             {activeTab === 'dashboard' && (
               <div className="dashboard-layout-grid">
-                
-                {/* BAL OLDALSÁV */}
                 <aside className="sidebar-container">
                   <div className="ui-widget-card">
                     <label className="input-label-flat">Eszköz gyorsválasztó</label>
@@ -519,7 +512,6 @@ function App() {
                   )}
                 </aside>
 
-                {/* JOBB OLDAL */}
                 <section className="main-viewport-pane">
                   <div className="ui-widget-card">
                     <div className="grid-wrapping-chips">
@@ -565,38 +557,26 @@ function App() {
                   </div>
 
                   <div className="ui-widget-card">
-                     <ResponsiveContainer width="100%" height={280}>
-                    <BarChart data={chartData} margin={{ top: 10, right: 5, left: -25, bottom: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                      <XAxis dataKey="label" fontSize={11} stroke="#64748b" tickLine={false} />
-                      <YAxis fontSize={11} stroke="#64748b" tickLine={false} axisLine={false} />
-                      <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(0, 0, 0, 0.02)' }} />
-                      <Legend iconType="circle" wrapperStyle={{ fontSize: '11px', paddingTop: '12px' }} />
-                      
-                      {(selectedAssetId === 'all' ? assets : assets.filter(a => String(a.Id) === String(selectedAssetId))).map((asset, idx) => {
-                        const color = selectedAssetId === 'all' ? ASSET_COLORS[idx % ASSET_COLORS.length] : getColor();
-                        return (
+                    <ResponsiveContainer width="100%" height={320}>
+                      <BarChart data={chartData} margin={{ top: 10, right: 5, left: -25, bottom: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                        <XAxis dataKey="label" fontSize={11} stroke="#64748b" tickLine={false} />
+                        <YAxis fontSize={11} stroke="#64748b" tickLine={false} axisLine={false} />
+                        <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(0,0,0,0.01)' }} />
+                        <Legend iconType="circle" wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
+                        {(selectedAssetId === 'all' ? assets : assets.filter(a => String(a.Id) === String(selectedAssetId))).map((asset, idx) => (
                           <React.Fragment key={asset.Id}>
-                            <Bar dataKey={asset.FriendlyName} stackId="expense" fill={color} radius={[3, 3, 0, 0]} />
-                            <Bar 
-                              dataKey={`${asset.FriendlyName}_income`} 
-                              name={`${asset.FriendlyName} (Bevétel)`} 
-                              stackId="income" 
-                              fill={color} 
-                              opacity={0.4} 
-                              legendType="none" 
-                            />
+                            <Bar dataKey={asset.FriendlyName} stackId="a" fill={ASSET_COLORS[idx % ASSET_COLORS.length]} radius={[3,3,0,0]} />
                           </React.Fragment>
-                        );
-                      })}
-                    </BarChart>
-                  </ResponsiveContainer>
+                        ))}
+                      </BarChart>
+                    </ResponsiveContainer>
                   </div>
                 </section>
               </div>
             )}
 
-            {/* ================= TAB 2: TRANZAKCIÓK KERESŐVEL ÉS SZŰRŐKKEL ================= */}
+            {/* ================= TAB 2: TRANZAKCIÓK ================= */}
             {activeTab === 'transactions' && (
               <div className="fullwidth-list-view">
                 <div className="list-title-header-row">
@@ -702,6 +682,72 @@ function App() {
                   </div>
                 </div>
 
+                {/* ÚJ KATEGÓRIA LÉTREHOZÁSA ÉS LISTA (Privát / Publikus kezeléssel) */}
+                <div className="ui-widget-card">
+                  <h3 className="card-heading-clean">{editingCategoryId ? "✏️ Kategória szerkesztése" : "⚙️ Új kategória hozzáadása"}</h3>
+                  <div className="vertical-form mt-2">
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <input 
+                        style={{ width: '70px' }} 
+                        className="form-control-select" 
+                        placeholder="Ikon" 
+                        value={newCategory.icon} 
+                        onChange={(e) => setNewCategory({...newCategory, icon: e.target.value})} 
+                      />
+                      <input 
+                        className="form-control-select" 
+                        placeholder="Kategória neve" 
+                        value={newCategory.name} 
+                        onChange={(e) => setNewCategory({...newCategory, name: e.target.value})} 
+                      />
+                    </div>
+                    <select className="form-control-select" value={newCategory.type} onChange={(e) => setNewCategory({...newCategory, type: e.target.value})}>
+                      <option value="both">📟 Óraállás + 💰 Számla (Kiadás)</option>
+                      <option value="invoice_only">Csak 💰 Számla (Kiadás)</option>
+                      <option value="income">💵 Bevétel (Csak Számla)</option>
+                    </select>
+                    
+                    {isAdmin && (
+                      <label className="checkbox-matrix-tile" style={{ padding: '8px 12px', background: 'transparent', border: 'none' }}>
+                        <input 
+                          type="checkbox" 
+                          checked={newCategory.isPublic} 
+                          onChange={(e) => setNewCategory({...newCategory, isPublic: e.target.checked})} 
+                        />
+                        <span style={{ fontSize: '0.85rem' }}>🌐 Publikus (Mindenki látja)</span>
+                      </label>
+                    )}
+                    
+                    <div className="action-buttons-row">
+                      <button className="btn-submit-form" onClick={handleCategorySave}>
+                        {editingCategoryId ? 'Módosítás mentése' : 'Kategória mentése'}
+                      </button>
+                      {editingCategoryId && (
+                        <button className="btn-action-primary" style={{ backgroundColor: '#64748b' }} onClick={() => { setEditingCategoryId(null); setNewCategory({ name: '', icon: '📄', type: 'both', isPublic: false }); }}>
+                          Mégse
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="shares-static-list mt-3 scrollable-list" style={{ maxHeight: '200px' }}>
+                    {categories.map((c: any) => {
+                      const isPublicCat = !c.UserId;
+                      return (
+                        <div key={c.Id} className="share-list-row-item">
+                          <span style={{ fontWeight: 600 }}>{c.Icon} {c.Name} {isPublicCat ? '🌐 (Publikus)' : '🔒 (Privát)'}</span>
+                          <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                            <button className="flat-delete-btn" style={{ color: 'var(--accent)' }} onClick={() => { setEditingCategoryId(c.Id); setNewCategory({ name: c.Name, icon: c.Icon, type: c.Type, isPublic: isPublicCat }); }}>✏️</button>
+                            {(!isPublicCat || isAdmin) && (
+                              <button className="flat-delete-btn" onClick={() => handleCategoryDelete(c.Id)}>❌</button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
                 <div className="ui-widget-card">
                   <h3 className="card-heading-clean">➕ Új eszköz / entitás hozzáadása</h3>
                   <div className="vertical-form mt-2">
@@ -749,7 +795,7 @@ function App() {
           </div>
         )}
 
-        {/* --- PREMIUM LIGHT-THEME STYLING ENGINE --- */}
+        {/* --- APPS LIGHT-THEME ENGINE --- */}
         <style>{`
           :root {
             --bg-main: #f8fafc;
@@ -829,8 +875,7 @@ function App() {
           .card-heading-clean { margin: 0 0 16px 0; font-size: 1rem; font-weight: 700; }
           .input-label-flat { font-size: 0.8rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; margin-bottom: 8px; display: block; }
 
-          /* --- ANTI-90S PREMIUM INPUTS & DROPDOWNS ENGINE --- */
-          .form-control-select, .vertical-form input {
+          .form-control-select {
             width: 100%; padding: 11px 14px; background: #ffffff; border: 1px solid var(--border);
             border-radius: 10px; color: var(--text-main); font-size: 15px !important; box-sizing: border-box;
             outline: none; height: 46px; transition: all 0.2s ease-in-out;
@@ -842,7 +887,7 @@ function App() {
             background-repeat: no-repeat; background-position: right 14px center; background-size: 15px;
             padding-right: 40px !important; cursor: pointer;
           }
-          .form-control-select:focus, .vertical-form input:focus {
+          .form-control-select:focus {
             border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.08); background-color: #ffffff;
           }
           .form-stack-vertical { display: flex; flex-direction: column; gap: 12px; }
@@ -863,10 +908,10 @@ function App() {
           .flex-input-group { display: flex; gap: 8px; }
           .btn-add-plus { background: var(--accent); border: none; color: white; width: 46px; height: 46px; border-radius: 10px; font-size: 1.2rem; cursor: pointer; }
 
-          .grid-wrapping-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+          .grid-wrapping-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
           .grid-chip-item {
             background: #f1f5f9; border: 1px solid var(--border); color: var(--text-main);
-            padding: 8px 12px; border-radius: 8px; font-size: 0.85rem; font-weight: 600; cursor: pointer;
+            padding: 10px 14px; border-radius: 12px; font-size: 0.85rem; font-weight: 600; cursor: pointer;
             display: inline-flex; align-items: center; gap: 6px; transition: all 0.2s;
           }
           .grid-chip-item:hover { background: #e2e8f0; }
@@ -884,12 +929,10 @@ function App() {
           .small-date-input { background: transparent; border: none; font-size: 0.8rem; outline: none; color: var(--text-main); cursor: pointer; font-family: inherit; }
           .date-separator { color: var(--text-muted); font-size: 0.8rem; }
 
-          /* ================= TRANZAKCIÓK ENGINE ================= */
           .search-filter-card-wrapper { margin-bottom: 16px; padding: 14px !important; }
           .search-filter-grid-layout { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 12px; }
           @media (max-width: 768px) { .search-filter-grid-layout { grid-template-columns: 1fr; } }
 
-          /* ================= BEÁLLÍTÁSOK MATRIX ================= */
           .settings-split-dashboard { display: grid; grid-template-columns: 1fr; gap: 20px; text-align: left; }
           @media (min-width: 768px) { .settings-split-dashboard { grid-template-columns: 1fr 1fr; } }
           .grid-span-full { grid-column: 1 / -1; }
@@ -912,8 +955,6 @@ function App() {
           .tile-icon { font-size: 1.1rem; }
           .tile-name { font-size: 0.85rem; }
 
-          /* --- TABLES --- */
-          .fullwidth-list-view { text-align: left; }
           .modern-data-table-stack { display: flex; flex-direction: column; gap: 6px; }
           .table-row-card { background: white; border: 1px solid var(--border); border-radius: 10px; padding: 10px 16px; display: flex; justify-content: space-between; align-items: center; }
           .row-left-info { display: flex; align-items: center; gap: 12px; }
@@ -927,7 +968,7 @@ function App() {
           .row-buttons-trigger button { background: #f1f5f9; border: 1px solid var(--border); padding: 4px 8px; border-radius: 6px; cursor: pointer; margin-left: 4px; }
           .empty-state-text { text-align: center; padding: 20px; color: var(--text-muted); font-size: 0.9rem; }
 
-          .share-list-row-item { display: flex; justify-content: space-between; padding: 8px; background: #f8fafc; border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem; }
+          .share-list-row-item { display: flex; justify-content: space-between; padding: 8px; background: #f8fafc; border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem; align-items: center; }
           .flat-delete-btn { background: transparent; border: none; color: var(--rose); cursor: pointer; }
           .custom-tooltip-box { background: white; padding: 10px; border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 10px rgba(0,0,0,0.06); font-size: 12px; }
           .tooltip-title { margin: 0 0 4px 0; font-weight: bold; border-bottom: 1px solid var(--border); padding-bottom: 2px; }
@@ -937,6 +978,7 @@ function App() {
           .auth-wrapper-centered { display: flex; justify-content: center; align-items: center; min-height: 50vh; }
           .auth-hero-card { background: white; border: 1px solid var(--border); padding: 30px; border-radius: 16px; }
           .gradient-text { color: var(--accent); font-weight: 800; }
+          .scrollable-list { overflow-y: auto; padding-right: 4px; }
         `}</style>
       </div>
     </GoogleOAuthProvider>
