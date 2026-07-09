@@ -198,6 +198,17 @@ function App() {
       });
     } catch (e) { forceLogout(); }
   };
+
+    const forceLogout = () => {
+    googleLogout(); setUser(null); setRecords([]); setInvoices([]); setAssets([]); 
+    setCategories([]); setSharedUsers([]); setMyShares([]); localStorage.removeItem('userToken');
+  };
+
+  useEffect(() => {
+    const savedToken = localStorage.getItem('userToken');
+    if (savedToken) handleLoginSuccess(savedToken);
+  }, []);
+  
   // --- DIAGRAM TOOLTIP ---
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
