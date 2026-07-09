@@ -65,7 +65,7 @@ function App() {
   const isReadOnly = viewingUserId !== null && viewingUserId !== user?.sub;
   const isAdmin = user && ADMIN_EMAILS.includes(user.email);
 
-  // --- 2. SZEKCIÓ: HOISZTOLT NATIVE FUNKCIÓK (Lekérdezések és formázások) ---
+  // --- 2. SZEKCIÓ: FIX HOISZTOLT ALAPFÜGGVÉNYEK ---
   function forceLogout() {
     googleLogout();
     setUser(null);
@@ -189,7 +189,7 @@ function App() {
     } catch (err) { console.error(err); }
   }
 
-  // --- 3. SZEKCIÓ: HOISZTOLT ADATMÓDOSÍTÓ METÓDUSOK (Helyreállítva!) ---
+  // --- 3. SZEKCIÓ: HOISZTOLT ADATMÓDOSÍTÓ METÓDUSOK ---
   async function handleSave() {
     if (!targetAssetId || targetAssetId === 'all' || !value) return alert("Hiányzó adatok!");
     const currentCat = categories.find(c => c.Name === type);
@@ -605,11 +605,26 @@ function App() {
                         <YAxis fontSize={11} stroke="#64748b" tickLine={false} axisLine={false} />
                         <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(0,0,0,0.01)' }} />
                         <Legend iconType="circle" wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
-                        {(selectedAssetId === 'all' ? assets : assets.filter(a => String(a.Id) === String(selectedAssetId))).map((asset, idx) => (
-                          <React.Fragment key={asset.Id}>
-                            <Bar dataKey={asset.FriendlyName} stackId="a" fill={ASSET_COLORS[idx % ASSET_COLORS.length]} radius={[3,3,0,0]} />
-                          </React.Fragment>
-                        ))}
+                        
+                        {/* BUGFIX: Itt építettem be a hiányzó Bevételek kirajzolását a grafikonra */}
+                        {(selectedAssetId === 'all' ? assets : assets.filter(a => String(a.Id) === String(selectedAssetId))).map((asset, idx) => {
+                          const color = ASSET_COLORS[idx % ASSET_COLORS.length];
+                          return (
+                            <React.Fragment key={asset.Id}>
+                              {/* Kiadások oszlopa */}
+                              <Bar dataKey={asset.FriendlyName} name={asset.FriendlyName} stackId="expense" fill={color} radius={[3,3,0,0]} />
+                              {/* Bevételek oszlopa (Halványabb, áttetsző árnyalattal, hogy elkülönüljön) */}
+                              <Bar 
+                                dataKey={`${asset.FriendlyName}_income`} 
+                                name={`${asset.FriendlyName} (Bevétel)`} 
+                                stackId="income" 
+                                fill={color} 
+                                opacity={0.45} 
+                                radius={[3,3,0,0]}
+                              />
+                            </React.Fragment>
+                          );
+                        })}
                       </BarChart>
                     </ResponsiveContainer>
                   </div>
@@ -723,7 +738,6 @@ function App() {
                   </div>
                 </div>
 
-                {/* ÚJ KATEGÓRIA SZEKCIÓ */}
                 <div className="ui-widget-card">
                   <h3 className="card-heading-clean">{editingCategoryId ? "✏️ Kategória szerkesztése" : "⚙️ Új kategória hozzáadása"}</h3>
                   <div className="vertical-form mt-2">
