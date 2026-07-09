@@ -403,6 +403,24 @@ function App() {
     if (res.ok) fetchAll(user.token);
   };
 
+    const getColor = (t: string = filter) => {
+    if (displayMode === 'cost' && t !== 'Összes' && t !== 'Összes kiadás') return '#10b981';
+    if (t === 'Összes') return '#4f46e5'; if (t === 'Összes kiadás') return '#ef4444';
+    switch(t) {
+      case 'Áram': return '#f59e0b';
+      case 'Víz': return '#06b6d4';
+      case 'Gáz': return '#f97316';
+      case 'Üzemanyag': return '#8b5cf6';
+      case 'Internet': return '#ec4899';
+      case 'Szemétszállítás': return '#64748b';
+      case 'Albérlet': return '#db2777';
+      default: 
+        let hash = 0;
+        for (let i = 0; i < t.length; i++) hash = t.charCodeAt(i) + ((hash << 5) - hash);
+        return `hsl(${hash % 360}, 65%, 55%)`;
+    }
+  };
+  
   const handleShare = async () => {
     if (!shareEmail) return;
     const res = await fetch(`${BACKEND_URL}/api/shares`, {
