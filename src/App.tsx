@@ -27,7 +27,7 @@ function App() {
   // Navigációs állapot (dashboard / transactions / settings)
   const [activeTab, setActiveTab] = useState<'dashboard' | 'transactions' | 'settings'>('dashboard');
   
-  // CRITICAL FIX: Tranzakciók oldali szűrők állapotai (amik az előbb kimaradtak)
+  // Tranzakciók oldali szűrők állapotai
   const [txSearch, setTxSearch] = useState('');
   const [txAssetFilter, setTxAssetFilter] = useState('all');
   const [txCategoryFilter, setTxCategoryFilter] = useState('all');
@@ -65,8 +65,43 @@ function App() {
 
   const [assetCategoryMap, setAssetCategoryMap] = useState<{ [key: string]: string[] }>({});
 
-  const isAdmin = user && ADMIN_EMAILS.includes(user.email);
   const isReadOnly = viewingUserId !== null && viewingUserId !== user?.sub;
+  const isAdmin = user && ADMIN_EMAILS.includes(user.email);
+
+  // --- AUTENTIKÁCIÓS METÓDUSOK (Helyreállítva a ReferenceError ellen) ---
+  const forceLogout = () => {
+    googleLogout();
+    setUser(null);
+    setRecords([]); setInvoices([]); setAssets([]); setCategories([]);
+    setSharedUsers([]); setMyShares([]);
+    localStorage.removeItem('userToken');
+  };
+
+  const handleLoginSuccess = async (token: string) => {
+    try {
+      const decoded: any = jwtDecode(token);
+      setUser({ ...decoded, token });
+      setViewingUserId(decoded.sub);
+      localStorage.setItem('userToken', token);
+      
+      fetchAll(token, decoded.sub);
+      fetchSharedAccounts(token);
+      fetchMyShares(token);
+
+      await fetch(`${BACKEND_URL}/api/login-sync`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
+      });
+    } catch (e) { 
+      console.error(e);
+      forceLogout(); 
+    }
+  };
+
+  useEffect(() => {
+    const savedToken = localStorage.getItem('userToken');
+    if (savedToken) handleLoginSuccess(savedToken);
+  }, []);
 
   useEffect(() => {
     if (assets.length > 0 && !matrixSelectedAssetId) {
@@ -98,7 +133,7 @@ function App() {
     return categories.filter(c => allowedNames.includes(c.Name));
   }, [categories, selectedAssetId, assetCategoryMap]);
 
-  // --- MEMOIZÁLT LISTÁK ÉS GRAFIKONOK (Kizárólag a változók deklarálása után) ---
+  // --- SAFE INITIALIZATION OF USEMEMOS (Kereső és diagram rögzítése) ---
   const combinedList = useMemo(() => {
     return [
       ...(filter === 'Összes' || filter === 'Összes kiadás' ? [] : records.filter(r => (selectedAssetId === 'all' || String(r.AssetId) === String(selectedAssetId)) && r.Type === filter).map(r => ({ ...r, lType: 'meter', d: r.FormattedDate }))),
@@ -181,34 +216,6 @@ function App() {
       : (chartRange === 'all' ? sorted : sorted.slice(-chartRange));
   }, [records, invoices, assets, filter, displayMode, viewMode, selectedAssetId, chartRange, customStartDate, customEndDate]);
 
-    const handleLoginSuccess = async (token: string) => {
-    try {
-      const decoded: any = jwtDecode(token);
-      setUser({ ...decoded, token });
-      setViewingUserId(decoded.sub);
-      localStorage.setItem('userToken', token);
-      
-      fetchAll(token, decoded.sub);
-      fetchSharedAccounts(token);
-      fetchMyShares(token);
-
-      await fetch(`${BACKEND_URL}/api/login-sync`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
-      });
-    } catch (e) { forceLogout(); }
-  };
-
-    const forceLogout = () => {
-    googleLogout(); setUser(null); setRecords([]); setInvoices([]); setAssets([]); 
-    setCategories([]); setSharedUsers([]); setMyShares([]); localStorage.removeItem('userToken');
-  };
-
-  useEffect(() => {
-    const savedToken = localStorage.getItem('userToken');
-    if (savedToken) handleLoginSuccess(savedToken);
-  }, []);
-  
   // --- DIAGRAM TOOLTIP ---
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
@@ -277,7 +284,7 @@ function App() {
     return null;
   };
 
-  // --- INTERAKCIÓS METÓDUSOK ---
+  // --- API ÉS INTERAKCIÓS METÓDUSOK ---
   const handleToggleCategoryForAsset = async (assetId: string, categoryName: string) => {
     if (isReadOnly) return;
     try {
@@ -296,6 +303,57 @@ function App() {
         alert("Szerver hiba történt a mentéskor.");
       }
     } catch (e) { console.error(e); }
+  };
+
+  const fetchMyShares = async (token: string) => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/shares/owned`, { headers: { 'Authorization': `Bearer ${token}` } });
+      if (res.ok) setMyShares(await res.json());
+    } catch (e) { console.error(e); }
+  };
+
+  const fetchSharedAccounts = async (token: string) => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/shares/me`, { headers: { 'Authorization': `Bearer ${token}` } });
+      if (res.ok) setSharedUsers(await res.json());
+    } catch (e) { console.error(e); }
+  };
+
+  const fetchAll = async (token: string, targetId?: string) => {
+    const id = targetId || viewingUserId || user?.sub;
+    if (!id || !token) return;
+    try {
+      const headers = { 'Authorization': `Bearer ${token}` };
+      const [recRes, invRes, assetRes, catRes, acRes] = await Promise.all([
+        fetch(`${BACKEND_URL}/api/records?userId=${id}`, { headers }),
+        fetch(`${BACKEND_URL}/api/invoices?userId=${id}`, { headers }),
+        fetch(`${BACKEND_URL}/api/assets?userId=${id}`, { headers }),
+        fetch(`${BACKEND_URL}/api/categories?userId=${id}`, { headers }),
+        fetch(`${BACKEND_URL}/api/asset-categories?userId=${id}`, { headers })
+      ]);
+      if (recRes.status === 401) return forceLogout();
+      
+      const recData = await recRes.json();
+      const invData = await invRes.json();
+      const astData = await assetRes.json();
+      const catData = await catRes.json();
+      const acData = await acRes.json();
+      
+      setRecords(Array.isArray(recData) ? recData : []);
+      setInvoices(Array.isArray(invData) ? invData : []);
+      setAssets(Array.isArray(astData) ? astData : []);
+      setCategories(Array.isArray(catData) ? catData : []);
+
+      if (Array.isArray(acData)) {
+        const map: { [key: string]: string[] } = {};
+        acData.forEach((row: any) => {
+          const aId = String(row.asset_id);
+          if (!map[aId]) map[aId] = [];
+          map[aId].push(row.category_name);
+        });
+        setAssetCategoryMap(map);
+      }
+    } catch (err) { console.error(err); }
   };
 
   const handleSave = async () => {
@@ -375,34 +433,19 @@ function App() {
     setValue('');
   };
 
-  const getIcon = (t: string) => {
-    if (t === 'Összes') return '📊'; if (t === 'Összes kiadás') return '📉';
-    return categories.find(c => c.Name === t)?.Icon || '📄';
-  };
-
-  const getColor = (t: string = filter) => {
-    if (displayMode === 'cost' && t !== 'Összes' && t !== 'Összes kiadás') return '#10b981';
-    if (t === 'Összes') return '#4f46e5'; if (t === 'Összes kiadás') return '#ef4444';
-    switch(t) {
-      case 'Áram': return '#f59e0b';
-      case 'Víz': return '#06b6d4';
-      case 'Gáz': return '#f97316';
-      case 'Üzemanyag': return '#8b5cf6';
-      case 'Internet': return '#ec4899';
-      case 'Szemétszállítás': return '#64748b';
-      case 'Albérlet': return '#db2777';
-      default: 
-        let hash = 0;
-        for (let i = 0; i < t.length; i++) hash = t.charCodeAt(i) + ((hash << 5) - hash);
-        return `hsl(${hash % 360}, 65%, 55%)`;
-    }
+  const revokeShare = async (id: number) => {
+    if (!window.confirm("Biztosan visszavonod a hozzáférést?")) return;
+    const res = await fetch(`${BACKEND_URL}/api/shares/${id}`, {
+      method: 'DELETE', headers: { 'Authorization': `Bearer ${user.token}` }
+    });
+    if (res.ok) fetchMyShares(user.token);
   };
 
   return (
     <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
       <div className="app-container">
         
-        {/* --- APP HEADER --- */}
+        {/* --- HEADER --- */}
         <header className="app-header">
           <div className="header-brand-section">
             <span className="brand-icon">⚡</span>
