@@ -181,6 +181,23 @@ function App() {
       : (chartRange === 'all' ? sorted : sorted.slice(-chartRange));
   }, [records, invoices, assets, filter, displayMode, viewMode, selectedAssetId, chartRange, customStartDate, customEndDate]);
 
+    const handleLoginSuccess = async (token: string) => {
+    try {
+      const decoded: any = jwtDecode(token);
+      setUser({ ...decoded, token });
+      setViewingUserId(decoded.sub);
+      localStorage.setItem('userToken', token);
+      
+      fetchAll(token, decoded.sub);
+      fetchSharedAccounts(token);
+      fetchMyShares(token);
+
+      await fetch(`${BACKEND_URL}/api/login-sync`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
+      });
+    } catch (e) { forceLogout(); }
+  };
   // --- DIAGRAM TOOLTIP ---
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
