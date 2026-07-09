@@ -406,7 +406,7 @@ function App() {
       : (chartRange === 'all' ? sorted : sorted.slice(-chartRange));
   }, [records, invoices, assets, filter, displayMode, viewMode, selectedAssetId, chartRange, customStartDate, customEndDate]);
 
-  // --- TOOLTIP DIZÁJN ---
+  // --- DIAGRAM TOOLTIP ---
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
       const unit = displayMode === 'cost' ? 'Ft' : '';
@@ -557,8 +557,15 @@ function App() {
                   <div className="ui-widget-card">
                     <div className="grid-wrapping-chips">
                       <button className={`grid-chip-item ${filter === 'Összes' ? 'active' : ''}`} onClick={() => setFilter('Összes')} style={filter === 'Összes' ? {backgroundColor: getColor('Összes'), color:'white'} : {}}>📊 Összesen</button>
+                      {/* FIX 1: Az Összes kiadás chip stílusa most már reaktívan követi a kiválasztást */}
                       {displayMode === 'cost' && (
-                        <button className={`grid-chip-item ${filter === 'Összes kiadás' ? 'active' : ''}`} onClick={() => setFilter('Összes kiadás')} style={{backgroundColor: getColor('Összes kiadás'), color:'white'}}>📉 Összes kiadás</button>
+                        <button 
+                          className={`grid-chip-item ${filter === 'Összes kiadás' ? 'active' : ''}`} 
+                          onClick={() => setFilter('Összes kiadás')} 
+                          style={filter === 'Összes kiadás' ? {backgroundColor: getColor('Összes kiadás'), color:'white'} : {}}
+                        >
+                          📉 Összes kiadás
+                        </button>
                       )}
                       {visibleCategories.map(c => (
                         <button key={c.Id} className={`grid-chip-item ${filter === c.Name ? 'active' : ''}`} onClick={() => setFilter(c.Name)} style={filter === c.Name ? {backgroundColor: getColor(c.Name), color: 'white'} : {}}>{c.Icon} {c.Name}</button>
@@ -606,14 +613,14 @@ function App() {
                         <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(0,0,0,0.01)' }} />
                         <Legend iconType="circle" wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
                         
-                        {/* BUGFIX: Itt építettem be a hiányzó Bevételek kirajzolását a grafikonra */}
+                        {/* RE-RENDER FIX: Oszlopok kirajzolása (Kiadások + Bevételek egyszerre stackelve) */}
                         {(selectedAssetId === 'all' ? assets : assets.filter(a => String(a.Id) === String(selectedAssetId))).map((asset, idx) => {
                           const color = ASSET_COLORS[idx % ASSET_COLORS.length];
                           return (
                             <React.Fragment key={asset.Id}>
                               {/* Kiadások oszlopa */}
                               <Bar dataKey={asset.FriendlyName} name={asset.FriendlyName} stackId="expense" fill={color} radius={[3,3,0,0]} />
-                              {/* Bevételek oszlopa (Halványabb, áttetsző árnyalattal, hogy elkülönüljön) */}
+                              {/* Bevételek külön stack oszlopa (Halványabb átlátszósággal) */}
                               <Bar 
                                 dataKey={`${asset.FriendlyName}_income`} 
                                 name={`${asset.FriendlyName} (Bevétel)`} 
