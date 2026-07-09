@@ -13,7 +13,7 @@ const ASSET_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#e
 const ADMIN_EMAILS = ['kovari.rudolf@gmail.com'];
 
 function App() {
-  // --- MINDEN ÁLLAPOT (STATE) EXPLICIT DEKLARÁCIÓJA ---
+  // --- 1. SZEKCIÓ: MINDEN ÁLLAPOT (STATE) DEKLARÁCIÓJA ---
   const [user, setUser] = useState<any>(null);
   const [records, setRecords] = useState<any[]>([]);
   const [invoices, setInvoices] = useState<any[]>([]);
@@ -24,15 +24,12 @@ function App() {
   const [viewingUserId, setViewingUserId] = useState<string | null>(null);
   const [selectedAssetId, setSelectedAssetId] = useState<string>('all');
   
-  // Navigációs állapot (dashboard / transactions / settings)
   const [activeTab, setActiveTab] = useState<'dashboard' | 'transactions' | 'settings'>('dashboard');
   
-  // Tranzakciók oldali szűrők állapotai
   const [txSearch, setTxSearch] = useState('');
   const [txAssetFilter, setTxAssetFilter] = useState('all');
   const [txCategoryFilter, setTxCategoryFilter] = useState('all');
   
-  // Kijelölt eszköz a beállítások menüpont alatti mátrixhoz
   const [matrixSelectedAssetId, setMatrixSelectedAssetId] = useState<string>('');
 
   const [recordMode, setRecordMode] = useState<'meter' | 'invoice'>('meter');
@@ -48,7 +45,7 @@ function App() {
   
   const [editingRecordId, setEditingRecordId] = useState<number | string | null>(null);
   const [editingRecordLType, setEditingRecordLType] = useState<'meter' | 'invoice' | null>(null);
-  
+
   const [newAsset, setNewAsset] = useState({ 
     category: 'property', friendlyName: '', city: '', street: '', 
     houseNumber: '', plateNumber: '', fuelType: 'Benzin', area: '' 
@@ -68,16 +65,16 @@ function App() {
   const isReadOnly = viewingUserId !== null && viewingUserId !== user?.sub;
   const isAdmin = user && ADMIN_EMAILS.includes(user.email);
 
-  // --- AUTENTIKÁCIÓS METÓDUSOK (Helyreállítva a ReferenceError ellen) ---
-  const forceLogout = () => {
+  // --- 2. SZEKCIÓ: FIX HOISZTOLT ALAPFÜGGVÉNYEK ---
+  function forceLogout() {
     googleLogout();
     setUser(null);
     setRecords([]); setInvoices([]); setAssets([]); setCategories([]);
     setSharedUsers([]); setMyShares([]);
     localStorage.removeItem('userToken');
-  };
+  }
 
-  const handleLoginSuccess = async (token: string) => {
+  function handleLoginSuccess(token: string) {
     try {
       const decoded: any = jwtDecode(token);
       setUser({ ...decoded, token });
@@ -88,7 +85,7 @@ function App() {
       fetchSharedAccounts(token);
       fetchMyShares(token);
 
-      await fetch(`${BACKEND_URL}/api/login-sync`, {
+      fetch(`${BACKEND_URL}/api/login-sync`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
       });
@@ -96,44 +93,93 @@ function App() {
       console.error(e);
       forceLogout(); 
     }
-  };
+  }
 
-  useEffect(() => {
-    const savedToken = localStorage.getItem('userToken');
-    if (savedToken) handleLoginSuccess(savedToken);
-  }, []);
+  function getIcon(t: string) {
+    if (t === 'Összes') return '📊'; if (t === 'Összes kiadás') return '📉';
+    const cat = categories.find(c => c.Name === t);
+    return cat ? cat.Icon : '📄';
+  }
 
-  useEffect(() => {
-    if (assets.length > 0 && !matrixSelectedAssetId) {
-      setMatrixSelectedAssetId(String(assets[0].Id));
+  function getColor(t: string) {
+    if (displayMode === 'cost' && t !== 'Összes' && t !== 'Összes kiadás') return '#10b981';
+    if (t === 'Összes') return '#4f46e5'; 
+    if (t === 'Összes kiadás') return '#ef4444';
+    switch(t) {
+      case 'Áram': return '#f59e0b';
+      case 'Víz': return '#06b6d4';
+      case 'Gáz': return '#f97316';
+      case 'Üzemanyag': return '#8b5cf6';
+      case 'Internet': return '#ec4899';
+      case 'Szemétszállítás': return '#64748b';
+      case 'Albérlet': return '#db2777';
+      default: 
+        let hash = 0;
+        for (let i = 0; i < t.length; i++) hash = t.charCodeAt(i) + ((hash << 5) - hash);
+        return `hsl(${hash % 360}, 65%, 55%)`;
     }
-  }, [assets]);
+  }
 
-  useEffect(() => {
-    const allowed = getAllowedTypes(selectedAssetId);
-    if (filter !== 'Összes' && filter !== 'Összes kiadás' && !allowed.includes(filter)) {
-      setFilter('Összes');
-    }
-  }, [selectedAssetId, assetCategoryMap]);
-
-  // --- RENDELÉSI SEGÉDFÜGGVÉNYEK ---
-  const getAllowedTypes = (assetId: string) => {
+  function getAllowedTypes(assetId: string) {
     const allCatNames = categories.map(c => c.Name);
     if (!assetId || assetId === 'all') return allCatNames;
-    if (assetCategoryMap[assetId] && assetCategoryMap[assetId].length > 0) {
+    
+    if (assetCategoryMap[assetId]) {
       return assetCategoryMap[assetId];
     }
+    
     const asset = assets.find((a: any) => String(a.Id) === String(assetId));
-    if (asset?.Category === 'car') return allCatNames.includes('Üzemanyag') ? ['Üzemanyag'] : allCatNames;
+    if (asset) {
+      if (asset.Category === 'car') {
+        return allCatNames.filter(name => ['Üzemanyag', 'Biztosítás', 'Szerviz', 'Egyéb'].includes(name));
+      }
+      if (asset.Category === 'property') {
+        return allCatNames.filter(name => !['Üzemanyag', 'Fizetés', 'Túrájó', 'Fotózás'].includes(name));
+      }
+      if (asset.Category === 'person') {
+        return allCatNames.filter(name => ['Fizetés', 'Túrájó', 'Fotózás', 'Mobiltelefon', 'Internet', 'Egyéb'].includes(name));
+      }
+    }
     return allCatNames;
-  };
+  }
 
+  // --- 3. SZEKCIÓ: AUTOMATIKUS ÁLLAPOT SZINKRONIZÁCIÓK (BUGFIXEK) ---
+  
+  // FIX 1: Megakadályozza, hogy az adatbázisba üres ("") kategória név (Type) kerüljön mentéskor
+  useEffect(() => {
+    const allowed = getAllowedTypes(targetAssetId);
+    if (allowed.length > 0) {
+      if (!type || !allowed.includes(type)) {
+        setType(allowed[0]);
+      }
+    } else {
+      setType('');
+    }
+  }, [targetAssetId, assets, categories, assetCategoryMap]);
+
+  // FIX 2: Autó vagy számla-exkluzív kategória esetén kényszeríti és zárolja a Számla módot
+  useEffect(() => {
+    const asset = assets.find(a => String(a.Id) === String(targetAssetId));
+    const currentCat = categories.find(c => c.Name === type);
+    
+    if (asset?.Category === 'car' || currentCat?.Type === 'invoice_only' || currentCat?.Type === 'income') {
+      setRecordMode('invoice');
+    }
+  }, [targetAssetId, type, assets, categories]);
+
+  // Kiszámolja, hogy a kiválasztott kategória tiltja-e az óraállás rögzítését
+  const isMeterDisabled = useMemo(() => {
+    const asset = assets.find(a => String(a.Id) === String(targetAssetId));
+    const currentCat = categories.find(c => c.Name === type);
+    return asset?.Category === 'car' || currentCat?.Type === 'invoice_only' || currentCat?.Type === 'income';
+  }, [targetAssetId, type, assets, categories]);
+
+  // --- 4. SZEKCIÓ: MEMOIZÁLT MEGJELENÍTÉSEK ---
   const visibleCategories = useMemo(() => {
     const allowedNames = getAllowedTypes(selectedAssetId);
     return categories.filter(c => allowedNames.includes(c.Name));
   }, [categories, selectedAssetId, assetCategoryMap]);
 
-  // --- SAFE INITIALIZATION OF USEMEMOS (Kereső és diagram rögzítése) ---
   const combinedList = useMemo(() => {
     return [
       ...(filter === 'Összes' || filter === 'Összes kiadás' ? [] : records.filter(r => (selectedAssetId === 'all' || String(r.AssetId) === String(selectedAssetId)) && r.Type === filter).map(r => ({ ...r, lType: 'meter', d: r.FormattedDate }))),
@@ -216,95 +262,7 @@ function App() {
       : (chartRange === 'all' ? sorted : sorted.slice(-chartRange));
   }, [records, invoices, assets, filter, displayMode, viewMode, selectedAssetId, chartRange, customStartDate, customEndDate]);
 
-  // --- DIAGRAM TOOLTIP ---
-  const CustomTooltip = ({ active, payload, label }: any) => {
-    if (active && payload && payload.length) {
-      const unit = displayMode === 'cost' ? 'Ft' : '';
-      if (displayMode === 'usage') {
-        const total = payload.reduce((sum: number, entry: any) => sum + (Number(entry.value) || 0), 0);
-        return (
-          <div className="custom-tooltip-box">
-            <p className="tooltip-title">{label}</p>
-            {payload.map((entry: any, index: number) => (
-              <div key={index} style={{ color: entry.color }} className="tooltip-row">
-                <span>{entry.name}:</span>
-                <span className="tooltip-val">{Number(entry.value).toLocaleString()} {unit}</span>
-              </div>
-            ))}
-            <div className="tooltip-total font-emerald">
-              <span>Összesen:</span><span>{total.toLocaleString()} {unit}</span>
-            </div>
-          </div>
-        );
-      }
-
-      const expenses = payload.filter((p: any) => !p.dataKey.endsWith('_income'));
-      const incomes = payload.filter((p: any) => p.dataKey.endsWith('_income'));
-      const totalExp = expenses.reduce((sum: number, p: any) => sum + Number(p.value), 0);
-      const totalInc = incomes.reduce((sum: number, p: any) => sum + Number(p.value), 0);
-      const netTotal = totalInc - totalExp;
-
-      return (
-        <div className="custom-tooltip-box">
-          <p className="tooltip-title">{label}</p>
-          {incomes.length > 0 && (
-            <div className="tooltip-section">
-              <div className="section-badge badge-income">Bevételek</div>
-              {incomes.map((entry: any, index: number) => (
-                <div key={`inc-${index}`} className="tooltip-row">
-                  <span style={{ color: entry.color }}>{entry.name.replace(' (Bevétel)', '')}:</span>
-                  <span className="font-emerald">+{Number(entry.value).toLocaleString()} {unit}</span>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {expenses.length > 0 && (
-            <div className="tooltip-section">
-              <div className="section-badge badge-expense">Kiadások</div>
-              {expenses.map((entry: any, index: number) => (
-                <div key={`exp-${index}`} className="tooltip-row">
-                  <span style={{ color: entry.color }}>{entry.name}:</span>
-                  <span>{Number(entry.value).toLocaleString()} {unit}</span>
-                </div>
-              ))}
-            </div>
-          )}
-          
-          <div className="tooltip-footer">
-            {totalExp > 0 && <div className="tooltip-row font-rose"><span>Össz. Kiadás:</span><span>-{totalExp.toLocaleString()} {unit}</span></div>}
-            {totalInc > 0 && <div className="tooltip-row font-emerald"><span>Össz. Bevétel:</span><span>+{totalInc.toLocaleString()} {unit}</span></div>}
-            <div className="tooltip-net" style={{ color: netTotal > 0 ? '#10b981' : (netTotal < 0 ? '#ef4444' : '#0f172a') }}>
-              <span>Egyenleg:</span><span>{netTotal > 0 ? '+' : ''}{netTotal.toLocaleString()} {unit}</span>
-            </div>
-          </div>
-        </div>
-      );
-    }
-    return null;
-  };
-
-  // --- API ÉS INTERAKCIÓS METÓDUSOK ---
-  const handleToggleCategoryForAsset = async (assetId: string, categoryName: string) => {
-    if (isReadOnly) return;
-    try {
-      const res = await fetch(`${BACKEND_URL}/api/asset-categories/toggle`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${user.token}` },
-        body: JSON.stringify({ assetId: parseInt(assetId), categoryName })
-      });
-      if (res.ok) {
-        const currentAllowed = assetCategoryMap[assetId] || [];
-        const updated = currentAllowed.includes(categoryName)
-          ? currentAllowed.filter(c => c !== categoryName)
-          : [...currentAllowed, categoryName];
-        setAssetCategoryMap({ ...assetCategoryMap, [assetId]: updated });
-      } else {
-        alert("Szerver hiba történt a mentéskor.");
-      }
-    } catch (e) { console.error(e); }
-  };
-
+  // --- 5. SZEKCIÓ: API LEKÉRDEZÉSEK SINKRONIZÁLÁSA ---
   const fetchMyShares = async (token: string) => {
     try {
       const res = await fetch(`${BACKEND_URL}/api/shares/owned`, { headers: { 'Authorization': `Bearer ${token}` } });
@@ -333,16 +291,11 @@ function App() {
       ]);
       if (recRes.status === 401) return forceLogout();
       
-      const recData = await recRes.json();
-      const invData = await invRes.json();
-      const astData = await assetRes.json();
-      const catData = await catRes.json();
+      setRecords(await recRes.json());
+      setInvoices(await invRes.json());
+      setAssets(await assetRes.json());
+      setCategories(await catRes.json());
       const acData = await acRes.json();
-      
-      setRecords(Array.isArray(recData) ? recData : []);
-      setInvoices(Array.isArray(invData) ? invData : []);
-      setAssets(Array.isArray(astData) ? astData : []);
-      setCategories(Array.isArray(catData) ? catData : []);
 
       if (Array.isArray(acData)) {
         const map: { [key: string]: string[] } = {};
@@ -356,45 +309,7 @@ function App() {
     } catch (err) { console.error(err); }
   };
 
-  const handleSave = async () => {
-    if (!targetAssetId || targetAssetId === 'all' || !value) return alert("Hiányzó adatok!");
-    const currentCat = categories.find(c => c.Name === type);
-    const isInvoice = recordMode === 'invoice' || currentCat?.Type === 'invoice_only' || currentCat?.Type === 'income';
-    const body = { type, value: parseFloat(value), amount: parseFloat(value), date: isInvoice ? invoiceDate : meterDate, assetId: parseInt(targetAssetId) };
-    const endpoint = editingRecordId ? `/api/${editingRecordLType === 'meter' ? 'records' : 'invoices'}/${editingRecordId}` : (isInvoice ? '/api/invoices' : '/api/records');
-    
-    const res = await fetch(`${BACKEND_URL}${endpoint}`, {
-      method: editingRecordId ? 'PUT' : 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${user.token}` },
-      body: JSON.stringify(body)
-    });
-    if (res.ok) { setValue(''); setEditingRecordId(null); fetchAll(user.token, viewingUserId!); }
-  };
-
-  const handleAssetSave = async () => {
-    if (!newAsset.friendlyName) return alert("Név kötelező!");
-    const res = await fetch(`${BACKEND_URL}/api/assets`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${user.token}` },
-      body: JSON.stringify(newAsset)
-    });
-    if (res.ok) { setNewAsset({ category: 'property', friendlyName: '', city: '', street: '', houseNumber: '', plateNumber: '', fuelType: 'Benzin', area: '' }); fetchAll(user.token); }
-  };
-
-  const handleCategorySave = async () => {
-    if (!newCategory.name) return alert("Kategória név kötelező!");
-    const url = editingCategoryId ? `${BACKEND_URL}/api/categories/${editingCategoryId}` : `${BACKEND_URL}/api/categories`;
-    const res = await fetch(url, {
-      method: editingCategoryId ? 'PUT' : 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${user.token}` },
-      body: JSON.stringify(newCategory)
-    });
-    if (res.ok) {
-      setEditingCategoryId(null);
-      setNewCategory({ name: '', icon: '📄', type: 'both', isPublic: false });
-      fetchAll(user.token);
-    }
-  };
-
+  // --- 6. SZEKCIÓ: ADAT MÓDOSÍTÓ METÓDUSOK ---
   const handleCategoryDelete = async (id: number) => {
     if (!window.confirm("Biztosan törlöd ezt a kategóriát?")) return;
     const res = await fetch(`${BACKEND_URL}/api/categories/${id}`, {
@@ -403,30 +318,6 @@ function App() {
     if (res.ok) fetchAll(user.token);
   };
 
-    const getIcon = (t: string) => {
-    if (t === 'Összes') return '📊'; if (t === 'Összes kiadás') return '📉';
-    const cat = categories.find(c => c.Name === t);
-    return cat ? cat.Icon : '📄';
-  };
-  
-    const getColor = (t: string = filter) => {
-    if (displayMode === 'cost' && t !== 'Összes' && t !== 'Összes kiadás') return '#10b981';
-    if (t === 'Összes') return '#4f46e5'; if (t === 'Összes kiadás') return '#ef4444';
-    switch(t) {
-      case 'Áram': return '#f59e0b';
-      case 'Víz': return '#06b6d4';
-      case 'Gáz': return '#f97316';
-      case 'Üzemanyag': return '#8b5cf6';
-      case 'Internet': return '#ec4899';
-      case 'Szemétszállítás': return '#64748b';
-      case 'Albérlet': return '#db2777';
-      default: 
-        let hash = 0;
-        for (let i = 0; i < t.length; i++) hash = t.charCodeAt(i) + ((hash << 5) - hash);
-        return `hsl(${hash % 360}, 65%, 55%)`;
-    }
-  };
-  
   const handleShare = async () => {
     if (!shareEmail) return;
     const res = await fetch(`${BACKEND_URL}/api/shares`, {
@@ -434,27 +325,6 @@ function App() {
       body: JSON.stringify({ sharedWithEmail: shareEmail })
     });
     if (res.ok) { setShareEmail(''); fetchMyShares(user.token); }
-  };
-
-  const handleEditRecord = (item: any) => {
-    setEditingRecordId(item.Id || item.id);
-    setEditingRecordLType(item.lType);
-    setRecordMode(item.lType);
-    setTargetAssetId(String(item.AssetId));
-    setType(item.Type);
-    setValue(String(item.Value || item.Amount || ''));
-    
-    const dateStr = String(item.d).substring(0, 10);
-    if (item.lType === 'meter') setMeterDate(dateStr);
-    else setInvoiceDate(dateStr);
-    setActiveTab('dashboard');
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
-
-  const cancelRecordEdit = () => {
-    setEditingRecordId(null);
-    setEditingRecordLType(null);
-    setValue('');
   };
 
   const revokeShare = async (id: number) => {
@@ -469,7 +339,7 @@ function App() {
     <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
       <div className="app-container">
         
-        {/* --- HEADER --- */}
+        {/* --- NAVBAR --- */}
         <header className="app-header">
           <div className="header-brand-section">
             <span className="brand-icon">⚡</span>
@@ -513,8 +383,15 @@ function App() {
                     <div className="ui-widget-card">
                       <h3 className="card-heading-clean">{editingRecordId ? "✏️ Tranzakció szerkesztése" : "Új adat hozzáadása"}</h3>
                       <div className="mode-toggle-pill">
-                        <button className={`pill-item ${recordMode === 'meter' ? 'active' : ''}`} onClick={() => setRecordMode('meter')} disabled={editingRecordId !== null}>📟 Óraállás</button>
-                        <button className={`pill-item ${recordMode === 'invoice' ? 'active' : ''}`} onClick={() => setRecordMode('invoice')} disabled={editingRecordId !== null}>💰 Számla</button>
+                        {/* FIX 2: Óraállás gomb inaktívvá tétele, ha nem releváns */}
+                        <button 
+                          className={`pill-item ${recordMode === 'meter' ? 'active' : ''}`} 
+                          onClick={() => setRecordMode('meter')}
+                          disabled={isMeterDisabled}
+                        >
+                          {isMeterDisabled ? '🔒 Óraállás' : '📟 Óraállás'}
+                        </button>
+                        <button className={`pill-item ${recordMode === 'invoice' ? 'active' : ''}`} onClick={() => setRecordMode('invoice')}>💰 Számla</button>
                       </div>
                       <div className="form-stack-vertical">
                         <select className="form-control-select" value={targetAssetId} onChange={(e) => setTargetAssetId(e.target.value)}>
@@ -553,7 +430,7 @@ function App() {
                     <div className="chart-filter-controls-row">
                       <div className="controls-left-side-modes">
                         <div className="compact-btn-group">
-                          <button className={displayMode === 'usage' ? 'active' : ''} disabled={filter === 'Összes' || filter === 'Összes kiadás'} onClick={() => setDisplayMode('usage')}>Fogyasztás</button>
+                          <button className={displayMode === 'usage' ? 'active' : ''} onClick={() => setDisplayMode('usage')}>Fogyasztás</button>
                           <button className={displayMode === 'cost' ? 'active' : ''} onClick={() => setDisplayMode('cost')}>Költség</button>
                         </div>
                         <div className="compact-btn-group">
@@ -708,7 +585,6 @@ function App() {
                   </div>
                 </div>
 
-                {/* ÚJ KATEGÓRIA SZEKCIÓ */}
                 <div className="ui-widget-card">
                   <h3 className="card-heading-clean">{editingCategoryId ? "✏️ Kategória szerkesztése" : "⚙️ Új kategória hozzáadása"}</h3>
                   <div className="vertical-form mt-2">
@@ -746,7 +622,7 @@ function App() {
                     
                     <div className="action-buttons-row">
                       <button className="btn-submit-form" onClick={handleCategorySave}>
-                        {editingCategoryId ? 'Módosítás mentése' : 'Kategória mentése'}
+                        Kategória mentése
                       </button>
                       {editingCategoryId && (
                         <button className="btn-action-primary" style={{ backgroundColor: '#64748b' }} onClick={() => { setEditingCategoryId(null); setNewCategory({ name: '', icon: '📄', type: 'both', isPublic: false }); }}>
@@ -922,7 +798,7 @@ function App() {
           .mode-toggle-pill { display: flex; background: #f1f5f9; padding: 4px; border-radius: 10px; gap: 4px; margin-bottom: 4px; }
           .pill-item { flex: 1; background: transparent; border: none; padding: 8px; font-size: 0.85rem; font-weight: 600; color: var(--text-muted); cursor: pointer; border-radius: 8px; }
           .pill-item.active { background: white; color: var(--text-main); box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
-          .pill-item:disabled { opacity: 0.5; cursor: not-allowed; }
+          .pill-item:disabled { opacity: 0.4; cursor: not-allowed; background: #e2e8f0; color: #a1a1aa; }
 
           .btn-submit-form, .btn-action-primary {
             background: var(--emerald); color: white; border: none; padding: 12px; border-radius: 10px;
@@ -996,7 +872,7 @@ function App() {
 
           .share-list-row-item { display: flex; justify-content: space-between; padding: 8px; background: #f8fafc; border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem; align-items: center; }
           .flat-delete-btn { background: transparent; border: none; color: var(--rose); cursor: pointer; }
-          .custom-tooltip-box { background: white; padding: 10px; border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 10px rgba(0,0,0,0.06); font-size: 12px; }
+          .custom-tooltip-box { background: white; padding: 10px; border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 10px rgba(0,0,0,0.06); font-size: 12px; z-index: 99; }
           .tooltip-title { margin: 0 0 4px 0; font-weight: bold; border-bottom: 1px solid var(--border); padding-bottom: 2px; }
           .tooltip-row { display: flex; justify-content: space-between; gap: 12px; }
           .font-emerald { color: var(--emerald); }
