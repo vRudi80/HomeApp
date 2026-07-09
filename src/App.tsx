@@ -403,6 +403,12 @@ function App() {
     if (res.ok) fetchAll(user.token);
   };
 
+    const getIcon = (t: string) => {
+    if (t === 'Összes') return '📊'; if (t === 'Összes kiadás') return '📉';
+    const cat = categories.find(c => c.Name === t);
+    return cat ? cat.Icon : '📄';
+  };
+  
     const getColor = (t: string = filter) => {
     if (displayMode === 'cost' && t !== 'Összes' && t !== 'Összes kiadás') return '#10b981';
     if (t === 'Összes') return '#4f46e5'; if (t === 'Összes kiadás') return '#ef4444';
