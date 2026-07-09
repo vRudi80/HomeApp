@@ -45,7 +45,7 @@ function App() {
   
   const [editingRecordId, setEditingRecordId] = useState<number | string | null>(null);
   const [editingRecordLType, setEditingRecordLType] = useState<'meter' | 'invoice' | null>(null);
-
+  
   const [newAsset, setNewAsset] = useState({ 
     category: 'property', friendlyName: '', city: '', street: '', 
     houseNumber: '', plateNumber: '', fuelType: 'Benzin', area: '' 
@@ -65,7 +65,7 @@ function App() {
   const isReadOnly = viewingUserId !== null && viewingUserId !== user?.sub;
   const isAdmin = user && ADMIN_EMAILS.includes(user.email);
 
-  // --- 2. SZEKCIÓ: FIX HOISZTOLT ALAPFÜGGVÉNYEK ---
+  // --- 2. SZEKCIÓ: HOISZTOLT NATIVE FUNKCIÓK (Lekérdezések és formázások) ---
   function forceLogout() {
     googleLogout();
     setUser(null);
@@ -143,9 +143,157 @@ function App() {
     return allCatNames;
   }
 
-  // --- 3. SZEKCIÓ: AUTOMATIKUS ÁLLAPOT SZINKRONIZÁCIÓK (BUGFIXEK) ---
-  
-  // FIX 1: Megakadályozza, hogy az adatbázisba üres ("") kategória név (Type) kerüljön mentéskor
+  async function fetchMyShares(token: string) {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/shares/owned`, { headers: { 'Authorization': `Bearer ${token}` } });
+      if (res.ok) setMyShares(await res.json());
+    } catch (e) { console.error(e); }
+  }
+
+  async function fetchSharedAccounts(token: string) {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/shares/me`, { headers: { 'Authorization': `Bearer ${token}` } });
+      if (res.ok) setSharedUsers(await res.json());
+    } catch (e) { console.error(e); }
+  }
+
+  async function fetchAll(token: string, targetId?: string) {
+    const id = targetId || viewingUserId || user?.sub;
+    if (!id || !token) return;
+    try {
+      const headers = { 'Authorization': `Bearer ${token}` };
+      const [recRes, invRes, assetRes, catRes, acRes] = await Promise.all([
+        fetch(`${BACKEND_URL}/api/records?userId=${id}`, { headers }),
+        fetch(`${BACKEND_URL}/api/invoices?userId=${id}`, { headers }),
+        fetch(`${BACKEND_URL}/api/assets?userId=${id}`, { headers }),
+        fetch(`${BACKEND_URL}/api/categories?userId=${id}`, { headers }),
+        fetch(`${BACKEND_URL}/api/asset-categories?userId=${id}`, { headers })
+      ]);
+      if (recRes.status === 401) return forceLogout();
+      
+      setRecords(await recRes.json());
+      setInvoices(await invRes.json());
+      setAssets(await assetRes.json());
+      setCategories(await catRes.json());
+      const acData = await acRes.json();
+
+      if (Array.isArray(acData)) {
+        const map: { [key: string]: string[] } = {};
+        acData.forEach((row: any) => {
+          const aId = String(row.asset_id);
+          if (!map[aId]) map[aId] = [];
+          map[aId].push(row.category_name);
+        });
+        setAssetCategoryMap(map);
+      }
+    } catch (err) { console.error(err); }
+  }
+
+  // --- 3. SZEKCIÓ: HOISZTOLT ADATMÓDOSÍTÓ METÓDUSOK (Helyreállítva!) ---
+  async function handleSave() {
+    if (!targetAssetId || targetAssetId === 'all' || !value) return alert("Hiányzó adatok!");
+    const currentCat = categories.find(c => c.Name === type);
+    const isInvoice = recordMode === 'invoice' || currentCat?.Type === 'invoice_only' || currentCat?.Type === 'income';
+    const body = { type, value: parseFloat(value), amount: parseFloat(value), date: isInvoice ? invoiceDate : meterDate, assetId: parseInt(targetAssetId) };
+    const endpoint = editingRecordId ? `/api/${editingRecordLType === 'meter' ? 'records' : 'invoices'}/${editingRecordId}` : (isInvoice ? '/api/invoices' : '/api/records');
+    
+    const res = await fetch(`${BACKEND_URL}${endpoint}`, {
+      method: editingRecordId ? 'PUT' : 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${user.token}` },
+      body: JSON.stringify(body)
+    });
+    if (res.ok) { setValue(''); setEditingRecordId(null); setEditingRecordLType(null); fetchAll(user.token, viewingUserId!); }
+  }
+
+  async function handleAssetSave() {
+    if (!newAsset.friendlyName) return alert("Név kötelező!");
+    const res = await fetch(`${BACKEND_URL}/api/assets`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${user.token}` },
+      body: JSON.stringify(newAsset)
+    });
+    if (res.ok) { setNewAsset({ category: 'property', friendlyName: '', city: '', street: '', houseNumber: '', plateNumber: '', fuelType: 'Benzin', area: '' }); fetchAll(user.token); }
+  }
+
+  async function handleCategorySave() {
+    if (!newCategory.name) return alert("Kategória név kötelező!");
+    const url = editingCategoryId ? `${BACKEND_URL}/api/categories/${editingCategoryId}` : `${BACKEND_URL}/api/categories`;
+    const res = await fetch(url, {
+      method: editingCategoryId ? 'PUT' : 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${user.token}` },
+      body: JSON.stringify(newCategory)
+    });
+    if (res.ok) {
+      setEditingCategoryId(null);
+      setNewCategory({ name: '', icon: '📄', type: 'both', isPublic: false });
+      fetchAll(user.token);
+    }
+  }
+
+  async function handleToggleCategoryForAsset(assetId: string, categoryName: string) {
+    if (isReadOnly) return;
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/asset-categories/toggle`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${user.token}` },
+        body: JSON.stringify({ assetId: parseInt(assetId), categoryName })
+      });
+      if (res.ok) {
+        const currentAllowed = assetCategoryMap[assetId] || [];
+        const updated = currentAllowed.includes(categoryName)
+          ? currentAllowed.filter(c => c !== categoryName)
+          : [...currentAllowed, categoryName];
+        setAssetCategoryMap({ ...assetCategoryMap, [assetId]: updated });
+      }
+    } catch (e) { console.error(e); }
+  }
+
+  async function handleCategoryDelete(id: number) {
+    if (!window.confirm("Biztosan törlöd ezt a kategóriát?")) return;
+    const res = await fetch(`${BACKEND_URL}/api/categories/${id}`, {
+      method: 'DELETE', headers: { 'Authorization': `Bearer ${user.token}` }
+    });
+    if (res.ok) fetchAll(user.token);
+  }
+
+  async function handleShare() {
+    if (!shareEmail) return;
+    const res = await fetch(`${BACKEND_URL}/api/shares`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${user.token}` },
+      body: JSON.stringify({ sharedWithEmail: shareEmail })
+    });
+    if (res.ok) { setShareEmail(''); fetchMyShares(user.token); }
+  }
+
+  async function revokeShare(id: number) {
+    if (!window.confirm("Biztosan visszavonod a hozzáférést?")) return;
+    const res = await fetch(`${BACKEND_URL}/api/shares/${id}`, {
+      method: 'DELETE', headers: { 'Authorization': `Bearer ${user.token}` }
+    });
+    if (res.ok) fetchMyShares(user.token);
+  }
+
+  function handleEditRecord(item: any) {
+    setEditingRecordId(item.Id || item.id);
+    setEditingRecordLType(item.lType);
+    setRecordMode(item.lType);
+    setTargetAssetId(String(item.AssetId));
+    setType(item.Type);
+    setValue(String(item.Value || item.Amount || ''));
+    
+    const dateStr = String(item.d).substring(0, 10);
+    if (item.lType === 'meter') setMeterDate(dateStr);
+    else setInvoiceDate(dateStr);
+    setActiveTab('dashboard');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  function cancelRecordEdit() {
+    setEditingRecordId(null);
+    setEditingRecordLType(null);
+    setValue('');
+  }
+
+  // --- 4. SZEKCIÓ: AUTOMATIKUS EFFEKTEK ÉS SZINKRONOK ---
   useEffect(() => {
     const allowed = getAllowedTypes(targetAssetId);
     if (allowed.length > 0) {
@@ -157,24 +305,20 @@ function App() {
     }
   }, [targetAssetId, assets, categories, assetCategoryMap]);
 
-  // FIX 2: Autó vagy számla-exkluzív kategória esetén kényszeríti és zárolja a Számla módot
   useEffect(() => {
     const asset = assets.find(a => String(a.Id) === String(targetAssetId));
     const currentCat = categories.find(c => c.Name === type);
-    
     if (asset?.Category === 'car' || currentCat?.Type === 'invoice_only' || currentCat?.Type === 'income') {
       setRecordMode('invoice');
     }
   }, [targetAssetId, type, assets, categories]);
 
-  // Kiszámolja, hogy a kiválasztott kategória tiltja-e az óraállás rögzítését
   const isMeterDisabled = useMemo(() => {
     const asset = assets.find(a => String(a.Id) === String(targetAssetId));
     const currentCat = categories.find(c => c.Name === type);
     return asset?.Category === 'car' || currentCat?.Type === 'invoice_only' || currentCat?.Type === 'income';
   }, [targetAssetId, type, assets, categories]);
 
-  // --- 4. SZEKCIÓ: MEMOIZÁLT MEGJELENÍTÉSEK ---
   const visibleCategories = useMemo(() => {
     const allowedNames = getAllowedTypes(selectedAssetId);
     return categories.filter(c => allowedNames.includes(c.Name));
@@ -262,77 +406,72 @@ function App() {
       : (chartRange === 'all' ? sorted : sorted.slice(-chartRange));
   }, [records, invoices, assets, filter, displayMode, viewMode, selectedAssetId, chartRange, customStartDate, customEndDate]);
 
-  // --- 5. SZEKCIÓ: API LEKÉRDEZÉSEK SINKRONIZÁLÁSA ---
-  const fetchMyShares = async (token: string) => {
-    try {
-      const res = await fetch(`${BACKEND_URL}/api/shares/owned`, { headers: { 'Authorization': `Bearer ${token}` } });
-      if (res.ok) setMyShares(await res.json());
-    } catch (e) { console.error(e); }
-  };
-
-  const fetchSharedAccounts = async (token: string) => {
-    try {
-      const res = await fetch(`${BACKEND_URL}/api/shares/me`, { headers: { 'Authorization': `Bearer ${token}` } });
-      if (res.ok) setSharedUsers(await res.json());
-    } catch (e) { console.error(e); }
-  };
-
-  const fetchAll = async (token: string, targetId?: string) => {
-    const id = targetId || viewingUserId || user?.sub;
-    if (!id || !token) return;
-    try {
-      const headers = { 'Authorization': `Bearer ${token}` };
-      const [recRes, invRes, assetRes, catRes, acRes] = await Promise.all([
-        fetch(`${BACKEND_URL}/api/records?userId=${id}`, { headers }),
-        fetch(`${BACKEND_URL}/api/invoices?userId=${id}`, { headers }),
-        fetch(`${BACKEND_URL}/api/assets?userId=${id}`, { headers }),
-        fetch(`${BACKEND_URL}/api/categories?userId=${id}`, { headers }),
-        fetch(`${BACKEND_URL}/api/asset-categories?userId=${id}`, { headers })
-      ]);
-      if (recRes.status === 401) return forceLogout();
-      
-      setRecords(await recRes.json());
-      setInvoices(await invRes.json());
-      setAssets(await assetRes.json());
-      setCategories(await catRes.json());
-      const acData = await acRes.json();
-
-      if (Array.isArray(acData)) {
-        const map: { [key: string]: string[] } = {};
-        acData.forEach((row: any) => {
-          const aId = String(row.asset_id);
-          if (!map[aId]) map[aId] = [];
-          map[aId].push(row.category_name);
-        });
-        setAssetCategoryMap(map);
+  // --- TOOLTIP DIZÁJN ---
+  const CustomTooltip = ({ active, payload, label }: any) => {
+    if (active && payload && payload.length) {
+      const unit = displayMode === 'cost' ? 'Ft' : '';
+      if (displayMode === 'usage') {
+        const total = payload.reduce((sum: number, entry: any) => sum + (Number(entry.value) || 0), 0);
+        return (
+          <div className="custom-tooltip-box">
+            <p className="tooltip-title">{label}</p>
+            {payload.map((entry: any, index: number) => (
+              <div key={index} style={{ color: entry.color }} className="tooltip-row">
+                <span>{entry.name}:</span>
+                <span className="tooltip-val">{Number(entry.value).toLocaleString()} {unit}</span>
+              </div>
+            ))}
+            <div className="tooltip-total font-emerald">
+              <span>Összesen:</span><span>{total.toLocaleString()} {unit}</span>
+            </div>
+          </div>
+        );
       }
-    } catch (err) { console.error(err); }
-  };
 
-  // --- 6. SZEKCIÓ: ADAT MÓDOSÍTÓ METÓDUSOK ---
-  const handleCategoryDelete = async (id: number) => {
-    if (!window.confirm("Biztosan törlöd ezt a kategóriát?")) return;
-    const res = await fetch(`${BACKEND_URL}/api/categories/${id}`, {
-      method: 'DELETE', headers: { 'Authorization': `Bearer ${user.token}` }
-    });
-    if (res.ok) fetchAll(user.token);
-  };
+      const expenses = payload.filter((p: any) => !p.dataKey.endsWith('_income'));
+      const incomes = payload.filter((p: any) => p.dataKey.endsWith('_income'));
+      const totalExp = expenses.reduce((sum: number, p: any) => sum + Number(p.value), 0);
+      const totalInc = incomes.reduce((sum: number, p: any) => sum + Number(p.value), 0);
+      const netTotal = totalInc - totalExp;
 
-  const handleShare = async () => {
-    if (!shareEmail) return;
-    const res = await fetch(`${BACKEND_URL}/api/shares`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${user.token}` },
-      body: JSON.stringify({ sharedWithEmail: shareEmail })
-    });
-    if (res.ok) { setShareEmail(''); fetchMyShares(user.token); }
-  };
+      return (
+        <div className="custom-tooltip-box">
+          <p className="tooltip-title">{label}</p>
+          {incomes.length > 0 && (
+            <div className="tooltip-section">
+              <div className="section-badge badge-income">Bevételek</div>
+              {incomes.map((entry: any, index: number) => (
+                <div key={`inc-${index}`} className="tooltip-row">
+                  <span style={{ color: entry.color }}>{entry.name.replace(' (Bevétel)', '')}:</span>
+                  <span className="font-emerald">+{Number(entry.value).toLocaleString()} {unit}</span>
+                </div>
+              ))}
+            </div>
+          )}
 
-  const revokeShare = async (id: number) => {
-    if (!window.confirm("Biztosan visszavonod a hozzáférést?")) return;
-    const res = await fetch(`${BACKEND_URL}/api/shares/${id}`, {
-      method: 'DELETE', headers: { 'Authorization': `Bearer ${user.token}` }
-    });
-    if (res.ok) fetchMyShares(user.token);
+          {expenses.length > 0 && (
+            <div className="tooltip-section">
+              <div className="section-badge badge-expense">Kiadások</div>
+              {expenses.map((entry: any, index: number) => (
+                <div key={`exp-${index}`} className="tooltip-row">
+                  <span style={{ color: entry.color }}>{entry.name}:</span>
+                  <span>{Number(entry.value).toLocaleString()} {unit}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          
+          <div className="tooltip-footer">
+            {totalExp > 0 && <div className="tooltip-row font-rose"><span>Össz. Kiadás:</span><span>-{totalExp.toLocaleString()} {unit}</span></div>}
+            {totalInc > 0 && <div className="tooltip-row font-emerald"><span>Össz. Bevétel:</span><span>+{totalInc.toLocaleString()} {unit}</span></div>}
+            <div className="tooltip-net" style={{ color: netTotal > 0 ? '#10b981' : (netTotal < 0 ? '#ef4444' : '#0f172a') }}>
+              <span>Egyenleg:</span><span>{netTotal > 0 ? '+' : ''}{netTotal.toLocaleString()} {unit}</span>
+            </div>
+          </div>
+        </div>
+      );
+    }
+    return null;
   };
 
   return (
@@ -383,7 +522,6 @@ function App() {
                     <div className="ui-widget-card">
                       <h3 className="card-heading-clean">{editingRecordId ? "✏️ Tranzakció szerkesztése" : "Új adat hozzáadása"}</h3>
                       <div className="mode-toggle-pill">
-                        {/* FIX 2: Óraállás gomb inaktívvá tétele, ha nem releváns */}
                         <button 
                           className={`pill-item ${recordMode === 'meter' ? 'active' : ''}`} 
                           onClick={() => setRecordMode('meter')}
@@ -420,7 +558,7 @@ function App() {
                     <div className="grid-wrapping-chips">
                       <button className={`grid-chip-item ${filter === 'Összes' ? 'active' : ''}`} onClick={() => setFilter('Összes')} style={filter === 'Összes' ? {backgroundColor: getColor('Összes'), color:'white'} : {}}>📊 Összesen</button>
                       {displayMode === 'cost' && (
-                        <button className={`grid-chip-item ${filter === 'Összes kiadás' ? 'active' : ''}`} onClick={() => setFilter('Összes kiadás')} style={filter === 'Összes kiadás' ? {backgroundColor: getColor('Összes kiadás'), color:'white'} : {}}>📉 Összes kiadás</button>
+                        <button className={`grid-chip-item ${filter === 'Összes kiadás' ? 'active' : ''}`} onClick={() => setFilter('Összes kiadás')} style={{backgroundColor: getColor('Összes kiadás'), color:'white'}}>📉 Összes kiadás</button>
                       )}
                       {visibleCategories.map(c => (
                         <button key={c.Id} className={`grid-chip-item ${filter === c.Name ? 'active' : ''}`} onClick={() => setFilter(c.Name)} style={filter === c.Name ? {backgroundColor: getColor(c.Name), color: 'white'} : {}}>{c.Icon} {c.Name}</button>
@@ -430,7 +568,7 @@ function App() {
                     <div className="chart-filter-controls-row">
                       <div className="controls-left-side-modes">
                         <div className="compact-btn-group">
-                          <button className={displayMode === 'usage' ? 'active' : ''} onClick={() => setDisplayMode('usage')}>Fogyasztás</button>
+                          <button className={displayMode === 'usage' ? 'active' : ''} disabled={filter === 'Összes' || filter === 'Összes kiadás'} onClick={() => setDisplayMode('usage')}>Fogyasztás</button>
                           <button className={displayMode === 'cost' ? 'active' : ''} onClick={() => setDisplayMode('cost')}>Költség</button>
                         </div>
                         <div className="compact-btn-group">
@@ -585,6 +723,7 @@ function App() {
                   </div>
                 </div>
 
+                {/* ÚJ KATEGÓRIA SZEKCIÓ */}
                 <div className="ui-widget-card">
                   <h3 className="card-heading-clean">{editingCategoryId ? "✏️ Kategória szerkesztése" : "⚙️ Új kategória hozzáadása"}</h3>
                   <div className="vertical-form mt-2">
