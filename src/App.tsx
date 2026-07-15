@@ -65,7 +65,7 @@ function App() {
   const isReadOnly = viewingUserId !== null && viewingUserId !== user?.sub;
   const isAdmin = user && ADMIN_EMAILS.includes(user.email);
 
-  // --- 2. SZEKCIÓ: FIX HOISZTOLT ALAPFÜGGVÉNYEK ---
+  // --- 2. SZEKCIÓ: FIX HOISZTOLT ALAPFÜGGVÉNYEK (ReferenceError ellen) ---
   function forceLogout() {
     googleLogout();
     setUser(null);
@@ -189,7 +189,6 @@ function App() {
     } catch (err) { console.error(err); }
   }
 
-  // --- 3. SZEKCIÓ: HOISZTOLT ADATMÓDOSÍTÓ METÓDUSOK ---
   async function handleSave() {
     if (!targetAssetId || targetAssetId === 'all' || !value) return alert("Hiányzó adatok!");
     const currentCat = categories.find(c => c.Name === type);
@@ -272,28 +271,18 @@ function App() {
     if (res.ok) fetchMyShares(user.token);
   }
 
-  function handleEditRecord(item: any) {
-    setEditingRecordId(item.Id || item.id);
-    setEditingRecordLType(item.lType);
-    setRecordMode(item.lType);
-    setTargetAssetId(String(item.AssetId));
-    setType(item.Type);
-    setValue(String(item.Value || item.Amount || ''));
-    
-    const dateStr = String(item.d).substring(0, 10);
-    if (item.lType === 'meter') setMeterDate(dateStr);
-    else setInvoiceDate(dateStr);
-    setActiveTab('dashboard');
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  }
+  // --- 3. SZEKCIÓ: AUTOMATIKUS SZINKRON EFFEKTEK ---
+  useEffect(() => {
+    const savedToken = localStorage.getItem('userToken');
+    if (savedToken) handleLoginSuccess(savedToken);
+  }, []);
 
-  function cancelRecordEdit() {
-    setEditingRecordId(null);
-    setEditingRecordLType(null);
-    setValue('');
-  }
+  useEffect(() => {
+    if (assets.length > 0 && !matrixSelectedAssetId) {
+      setMatrixSelectedAssetId(String(assets[0].Id));
+    }
+  }, [assets]);
 
-  // --- 4. SZEKCIÓ: AUTOMATIKUS EFFEKTEK ÉS SZINKRONOK ---
   useEffect(() => {
     const allowed = getAllowedTypes(targetAssetId);
     if (allowed.length > 0) {
@@ -354,6 +343,7 @@ function App() {
     });
   }, [combinedList, txSearch, txAssetFilter, txCategoryFilter, assets]);
 
+  // --- 4. SZEKCIÓ: NAPTÁRI HÓNAP ALAPÚ FOGYASZTÁSI MOTOR (KORRIGÁLVA!) ---
   const chartData = useMemo(() => {
     const dataMap: { [key: string]: any } = {};
     const fRec = records.filter((r: any) => selectedAssetId === 'all' || String(r.AssetId) === String(selectedAssetId));
@@ -367,15 +357,35 @@ function App() {
       });
 
       Object.keys(assetsMap).forEach(assetId => {
-        const filtered = assetsMap[assetId].sort((a: any, b: any) => new Date(a.FormattedDate).getTime() - new Date(b.FormattedDate).getTime());
-        for (let i = 1; i < filtered.length; i++) {
-          const diff = parseFloat(filtered[i].Value) - parseFloat(filtered[i-1].Value);
+        const sortedRecords = assetsMap[assetId].sort((a: any, b: any) => new Date(a.FormattedDate).getTime() - new Date(b.FormattedDate).getTime());
+        
+        // Összegyűjtjük minden hónap legelső (legkorábbi) leolvasását
+        const firstReadingPerMonth: { [key: string]: number } = {};
+        sortedRecords.forEach((r: any) => {
+          const monthKey = r.FormattedDate.substring(0, 7); // "YYYY-MM"
+          if (firstReadingPerMonth[monthKey] === undefined) {
+            firstReadingPerMonth[monthKey] = parseFloat(r.Value);
+          }
+        });
+
+        const months = Object.keys(firstReadingPerMonth).sort();
+
+        // Kiszámoljuk a különbséget: Hónap(X) fogyasztása = Hónap(X+1) első állása - Hónap(X) első állása
+        for (let i = 0; i < months.length - 1; i++) {
+          const currentMonth = months[i];
+          const nextMonth = months[i + 1];
+          
+          const v1 = firstReadingPerMonth[currentMonth];
+          const v2 = firstReadingPerMonth[nextMonth];
+          const diff = v2 - v1;
+
           if (diff >= 0) {
-            const key = viewMode === 'monthly' ? filtered[i].FormattedDate.substring(0, 7) : filtered[i].FormattedDate.substring(0, 4);
+            const chartKey = viewMode === 'monthly' ? currentMonth : currentMonth.substring(0, 4);
             const asset = assets.find(a => String(a.Id) === String(assetId));
             const label = asset ? asset.FriendlyName : 'Egyéb';
-            if (!dataMap[key]) dataMap[key] = { label: key };
-            dataMap[key][label] = (dataMap[key][label] || 0) + diff;
+            
+            if (!dataMap[chartKey]) dataMap[chartKey] = { label: chartKey };
+            dataMap[chartKey][label] = (dataMap[chartKey][label] || 0) + diff;
           }
         }
       });
@@ -406,7 +416,7 @@ function App() {
       : (chartRange === 'all' ? sorted : sorted.slice(-chartRange));
   }, [records, invoices, assets, filter, displayMode, viewMode, selectedAssetId, chartRange, customStartDate, customEndDate]);
 
-  // --- DIAGRAM TOOLTIP ---
+  // --- TOOLTIP RAJZOLÓ ---
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
       const unit = displayMode === 'cost' ? 'Ft' : '';
@@ -487,7 +497,7 @@ function App() {
           
           {user && (
             <nav className="header-navigation-tabs">
-              <button className={`nav-tab-link ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveTab('dashboard')}>📊 Kimutatások</button>
+              <button className={`nav-tab-link ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveTab('dashboard')}>📊 Műszerfal</button>
               <button className={`nav-tab-link ${activeTab === 'transactions' ? 'active' : ''}`} onClick={() => setActiveTab('transactions')}>📜 Tranzakciók</button>
               <button className={`nav-tab-link ${activeTab === 'settings' ? 'active' : ''}`} onClick={() => setActiveTab('settings')}>⚙️ Beállítások & Eszközök</button>
             </nav>
@@ -557,7 +567,8 @@ function App() {
                   <div className="ui-widget-card">
                     <div className="grid-wrapping-chips">
                       <button className={`grid-chip-item ${filter === 'Összes' ? 'active' : ''}`} onClick={() => setFilter('Összes')} style={filter === 'Összes' ? {backgroundColor: getColor('Összes'), color:'white'} : {}}>📊 Összesen</button>
-                      {/* FIX 1: Az Összes kiadás chip stílusa most már reaktívan követi a kiválasztást */}
+                      
+                      {/* FIXED: Reaktív gombstílus feltétel - csak akkor piros, ha ténylegesen ki van jelölve */}
                       {displayMode === 'cost' && (
                         <button 
                           className={`grid-chip-item ${filter === 'Összes kiadás' ? 'active' : ''}`} 
@@ -575,7 +586,7 @@ function App() {
                     <div className="chart-filter-controls-row">
                       <div className="controls-left-side-modes">
                         <div className="compact-btn-group">
-                          <button className={displayMode === 'usage' ? 'active' : ''} disabled={filter === 'Összes' || filter === 'Összes kiadás'} onClick={() => setDisplayMode('usage')}>Fogyasztás</button>
+                          <button className={displayMode === 'usage' ? 'active' : ''} onClick={() => setDisplayMode('usage')}>Fogyasztás</button>
                           <button className={displayMode === 'cost' ? 'active' : ''} onClick={() => setDisplayMode('cost')}>Költség</button>
                         </div>
                         <div className="compact-btn-group">
@@ -613,14 +624,11 @@ function App() {
                         <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(0,0,0,0.01)' }} />
                         <Legend iconType="circle" wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
                         
-                        {/* RE-RENDER FIX: Oszlopok kirajzolása (Kiadások + Bevételek egyszerre stackelve) */}
                         {(selectedAssetId === 'all' ? assets : assets.filter(a => String(a.Id) === String(selectedAssetId))).map((asset, idx) => {
                           const color = ASSET_COLORS[idx % ASSET_COLORS.length];
                           return (
                             <React.Fragment key={asset.Id}>
-                              {/* Kiadások oszlopa */}
                               <Bar dataKey={asset.FriendlyName} name={asset.FriendlyName} stackId="expense" fill={color} radius={[3,3,0,0]} />
-                              {/* Bevételek külön stack oszlopa (Halványabb átlátszósággal) */}
                               <Bar 
                                 dataKey={`${asset.FriendlyName}_income`} 
                                 name={`${asset.FriendlyName} (Bevétel)`} 
