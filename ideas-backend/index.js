@@ -19,6 +19,12 @@ const pool = mysql.createPool({
     user: process.env.DB_USER,
     password: process.env.DB_PASSWORD,
     database: process.env.DB_NAME,
+    waitForConnections: true,
+  connectionLimit: 2,
+  maxIdle: 2,
+  idleTimeout: 30000,        // 30 másodperc tétlenség után automatikusan lezárja és tisztítja az alvó kapcsolatot
+  enableKeepAlive: true,     // Bekapcsolja a TCP Keep-Alive-ot a háttérben
+  keepAliveInitialDelay: 10000 // 10 másodpercenként küld egy pinget az adatbázisnak, hogy életben tartsa
 });
 
 // --- AUTENTIKÁCIÓ ÉS JOGOSULTSÁGOK ---
