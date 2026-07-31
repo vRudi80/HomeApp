@@ -617,7 +617,7 @@ function App() {
 
                   <div className="ui-widget-card">
                     <ResponsiveContainer width="100%" height={320}>
-                      <BarChart data={chartData} margin={{ top: 10, right: 5, left: -25, bottom: 0 }}>
+                      <BarChart data={chartData} margin={{ top: 10, right: 5, left: 0, bottom: 0 }}>
                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
                         <XAxis dataKey="label" fontSize={11} stroke="#64748b" tickLine={false} />
                         <YAxis fontSize={11} stroke="#64748b" tickLine={false} axisLine={false} />
