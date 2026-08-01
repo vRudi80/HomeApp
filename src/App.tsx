@@ -65,7 +65,7 @@ function App() {
   const isReadOnly = viewingUserId !== null && viewingUserId !== user?.sub;
   const isAdmin = user && ADMIN_EMAILS.includes(user.email);
 
-  // --- 2. SZEKCIÓ: FIX HOISZTOLT ALAPFÜGGVÉNYEK (ReferenceError ellen) ---
+  // --- 2. SZEKCIÓ: FIX HOISZTOLT ALAPFÜGGVÉNYEK ---
   function forceLogout() {
     googleLogout();
     setUser(null);
@@ -189,6 +189,7 @@ function App() {
     } catch (err) { console.error(err); }
   }
 
+  // --- 3. SZEKCIÓ: HOISZTOLT ADATMÓDOSÍTÓ METÓDUSOK ---
   async function handleSave() {
     if (!targetAssetId || targetAssetId === 'all' || !value) return alert("Hiányzó adatok!");
     const currentCat = categories.find(c => c.Name === type);
@@ -271,7 +272,28 @@ function App() {
     if (res.ok) fetchMyShares(user.token);
   }
 
-  // --- 3. SZEKCIÓ: AUTOMATIKUS SZINKRON EFFEKTEK ---
+  function handleEditRecord(item: any) {
+    setEditingRecordId(item.Id || item.id);
+    setEditingRecordLType(item.lType);
+    setRecordMode(item.lType);
+    setTargetAssetId(String(item.AssetId));
+    setType(item.Type);
+    setValue(String(item.Value || item.Amount || ''));
+    
+    const dateStr = String(item.d).substring(0, 10);
+    if (item.lType === 'meter') setMeterDate(dateStr);
+    else setInvoiceDate(dateStr);
+    setActiveTab('dashboard');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  function cancelRecordEdit() {
+    setEditingRecordId(null);
+    setEditingRecordLType(null);
+    setValue('');
+  }
+
+  // --- 4. SZEKCIÓ: AUTOMATIKUS EFFEKTEK ÉS SZINKRONOK ---
   useEffect(() => {
     const savedToken = localStorage.getItem('userToken');
     if (savedToken) handleLoginSuccess(savedToken);
@@ -313,23 +335,35 @@ function App() {
     return categories.filter(c => allowedNames.includes(c.Name));
   }, [categories, selectedAssetId, assetCategoryMap]);
 
+  // FIX: A TELJES TRANZAKCIÓS LISTA ÖSSZEÁLLÍTÁSA (ÓRAÁLLÁSOK + SZÁMLÁK EGYÜTT!)
   const combinedList = useMemo(() => {
-    return [
-      ...(filter === 'Összes' || filter === 'Összes kiadás' ? [] : records.filter(r => (selectedAssetId === 'all' || String(r.AssetId) === String(selectedAssetId)) && r.Type === filter).map(r => ({ ...r, lType: 'meter', d: r.FormattedDate }))),
-      ...invoices.filter(i => {
-        if (selectedAssetId !== 'all' && String(i.AssetId) !== String(selectedAssetId)) return false;
-        if (filter === 'Összes') return true;
-        if (filter === 'Összes kiadás') return categories.find(c => c.Name === i.Type)?.Type !== 'income';
-        return i.Type === filter;
-      }).map(i => ({ ...i, lType: 'invoice', Value: i.Amount, d: i.Month }))
-    ].sort((a, b) => new Date(b.d).getTime() - new Date(a.d).getTime());
-  }, [records, invoices, selectedAssetId, filter, categories]);
+    const safeRecords = Array.isArray(records) ? records : [];
+    const safeInvoices = Array.isArray(invoices) ? invoices : [];
 
+    const formattedRecords = safeRecords.map(r => ({
+      ...r,
+      lType: 'meter',
+      d: r.FormattedDate || r.Date
+    }));
+
+    const formattedInvoices = safeInvoices.map(i => ({
+      ...i,
+      lType: 'invoice',
+      Value: i.Amount,
+      d: i.Month
+    }));
+
+    return [...formattedRecords, ...formattedInvoices].sort(
+      (a, b) => new Date(b.d).getTime() - new Date(a.d).getTime()
+    );
+  }, [records, invoices]);
+
+  // A Tranzakciók fül saját szűrői (Keresőmező, Eszköz választó, Kategória választó)
   const filteredCombinedList = useMemo(() => {
     return combinedList.filter((item: any) => {
       const asset = assets.find(a => String(a.Id) === String(item.AssetId));
       const assetName = asset ? asset.FriendlyName.toLowerCase() : '';
-      const itemType = item.Type.toLowerCase();
+      const itemType = item.Type ? item.Type.toLowerCase() : '';
       
       const searchMatch = 
         itemType.includes(txSearch.toLowerCase()) || 
@@ -343,11 +377,14 @@ function App() {
     });
   }, [combinedList, txSearch, txAssetFilter, txCategoryFilter, assets]);
 
-  // --- 4. SZEKCIÓ: NAPTÁRI HÓNAP ALAPÚ FOGYASZTÁSI MOTOR (KORRIGÁLVA!) ---
+  // --- 5. SZEKCIÓ: NAPTÁRI HÓNAP ALAPÚ FOGYASZTÁSI MOTOR ---
   const chartData = useMemo(() => {
     const dataMap: { [key: string]: any } = {};
-    const fRec = records.filter((r: any) => selectedAssetId === 'all' || String(r.AssetId) === String(selectedAssetId));
-    const fInv = invoices.filter((i: any) => selectedAssetId === 'all' || String(i.AssetId) === String(selectedAssetId));
+    const safeRecords = Array.isArray(records) ? records : [];
+    const safeInvoices = Array.isArray(invoices) ? invoices : [];
+
+    const fRec = safeRecords.filter((r: any) => selectedAssetId === 'all' || String(r.AssetId) === String(selectedAssetId));
+    const fInv = safeInvoices.filter((i: any) => selectedAssetId === 'all' || String(i.AssetId) === String(selectedAssetId));
 
     if (displayMode === 'usage') {
       const assetsMap: { [key: string]: any[] } = {};
@@ -359,10 +396,9 @@ function App() {
       Object.keys(assetsMap).forEach(assetId => {
         const sortedRecords = assetsMap[assetId].sort((a: any, b: any) => new Date(a.FormattedDate).getTime() - new Date(b.FormattedDate).getTime());
         
-        // Összegyűjtjük minden hónap legelső (legkorábbi) leolvasását
         const firstReadingPerMonth: { [key: string]: number } = {};
         sortedRecords.forEach((r: any) => {
-          const monthKey = r.FormattedDate.substring(0, 7); // "YYYY-MM"
+          const monthKey = String(r.FormattedDate).substring(0, 7);
           if (firstReadingPerMonth[monthKey] === undefined) {
             firstReadingPerMonth[monthKey] = parseFloat(r.Value);
           }
@@ -370,7 +406,6 @@ function App() {
 
         const months = Object.keys(firstReadingPerMonth).sort();
 
-        // Kiszámoljuk a különbséget: Hónap(X) fogyasztása = Hónap(X+1) első állása - Hónap(X) első állása
         for (let i = 0; i < months.length - 1; i++) {
           const currentMonth = months[i];
           const nextMonth = months[i + 1];
@@ -497,7 +532,7 @@ function App() {
           
           {user && (
             <nav className="header-navigation-tabs">
-              <button className={`nav-tab-link ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveTab('dashboard')}>📊 Kimutatás</button>
+              <button className={`nav-tab-link ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveTab('dashboard')}>📊 Műszerfal</button>
               <button className={`nav-tab-link ${activeTab === 'transactions' ? 'active' : ''}`} onClick={() => setActiveTab('transactions')}>📜 Tranzakciók</button>
               <button className={`nav-tab-link ${activeTab === 'settings' ? 'active' : ''}`} onClick={() => setActiveTab('settings')}>⚙️ Beállítások & Eszközök</button>
             </nav>
@@ -568,7 +603,6 @@ function App() {
                     <div className="grid-wrapping-chips">
                       <button className={`grid-chip-item ${filter === 'Összes' ? 'active' : ''}`} onClick={() => setFilter('Összes')} style={filter === 'Összes' ? {backgroundColor: getColor('Összes'), color:'white'} : {}}>📊 Összesen</button>
                       
-                      {/* FIXED: Reaktív gombstílus feltétel - csak akkor piros, ha ténylegesen ki van jelölve */}
                       {displayMode === 'cost' && (
                         <button 
                           className={`grid-chip-item ${filter === 'Összes kiadás' ? 'active' : ''}`} 
@@ -617,10 +651,17 @@ function App() {
 
                   <div className="ui-widget-card">
                     <ResponsiveContainer width="100%" height={320}>
-                      <BarChart data={chartData} margin={{ top: 10, right: 5, left: 0, bottom: 0 }}>
+                      <BarChart data={chartData} margin={{ top: 10, right: 15, left: 10, bottom: 0 }}>
                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
                         <XAxis dataKey="label" fontSize={11} stroke="#64748b" tickLine={false} />
-                        <YAxis fontSize={11} stroke="#64748b" tickLine={false} axisLine={false} />
+                        <YAxis 
+                          fontSize={11} 
+                          stroke="#64748b" 
+                          tickLine={false} 
+                          axisLine={false} 
+                          width={65}
+                          tickFormatter={(val) => val >= 1000 ? `${(val / 1000).toLocaleString()}k` : val}
+                        />
                         <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(0,0,0,0.01)' }} />
                         <Legend iconType="circle" wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
                         
