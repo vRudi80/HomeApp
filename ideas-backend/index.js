@@ -13,18 +13,20 @@ const client = new OAuth2Client(GOOGLE_CLIENT_ID);
 
 const ADMIN_EMAILS = ['kovari.rudolf@gmail.com']; 
 
+// --- KAPCSOLAT GYŰJTŐ (Filess.io limit védelem) ---
 const pool = mysql.createPool({
     host: process.env.DB_HOST,
-    port: process.env.DB_PORT,
+    port: process.env.DB_PORT || 3306,
     user: process.env.DB_USER,
     password: process.env.DB_PASSWORD,
     database: process.env.DB_NAME,
+    
     waitForConnections: true,
-  connectionLimit: 2,
-  maxIdle: 2,
-  idleTimeout: 30000,        // 30 másodperc tétlenség után automatikusan lezárja és tisztítja az alvó kapcsolatot
-  enableKeepAlive: true,     // Bekapcsolja a TCP Keep-Alive-ot a háttérben
-  keepAliveInitialDelay: 10000 // 10 másodpercenként küld egy pinget az adatbázisnak, hogy életben tartsa
+    connectionLimit: 2,         // Max 2 egyidejű kapcsolat a Filess.io ingyenes keretéhez
+    maxIdle: 1,
+    idleTimeout: 5000,
+    enableKeepAlive: true,
+    keepAliveInitialDelay: 0
 });
 
 // --- AUTENTIKÁCIÓ ÉS JOGOSULTSÁGOK ---
@@ -55,7 +57,7 @@ async function verifyUser(req, res, next) {
 
 function requireAdmin(req, res, next) {
     if (!ADMIN_EMAILS.includes(req.userEmail)) {
-        return res.status(403).json({ error: 'Nincs adminisztrátori jogosulterősséged!' });
+        return res.status(403).json({ error: 'Nincs adminisztrátori jogosultságod!' });
     }
     next();
 }
@@ -268,6 +270,35 @@ app.post('/api/invoices', verifyUser, async (req, res) => {
         await pool.query('INSERT INTO invoices (Type, Amount, Month, UserId, AssetId) VALUES (?, ?, ?, ?, ?)', [type, amount, date, req.userId, assetId]);
         res.status(201).json({ success: true });
     } catch (err) { res.status(500).json({ error: 'Hiba' }); }
+});
+
+// --- REKORDOK ÉS SZÁMLÁK MÓDOSÍTÁSA (PUT végpontok - Helyreállítva!) ---
+app.put('/api/records/:id', verifyUser, async (req, res) => {
+    const { type, value, date, assetId } = req.body;
+    try {
+        await pool.query(
+            'UPDATE utility_records SET Type = ?, Value = ?, Date = ?, AssetId = ? WHERE Id = ? AND UserId = ?',
+            [type, value, date, assetId, req.params.id, req.userId]
+        );
+        res.json({ success: true });
+    } catch (err) {
+        console.error("Hiba a rekord módosításánál:", err);
+        res.status(500).json({ error: 'Hiba a rekord módosításánál' });
+    }
+});
+
+app.put('/api/invoices/:id', verifyUser, async (req, res) => {
+    const { type, amount, date, assetId } = req.body;
+    try {
+        await pool.query(
+            'UPDATE invoices SET Type = ?, Amount = ?, Month = ?, AssetId = ? WHERE Id = ? AND UserId = ?',
+            [type, amount, date, assetId, req.params.id, req.userId]
+        );
+        res.json({ success: true });
+    } catch (err) {
+        console.error("Hiba a számla módosításánál:", err);
+        res.status(500).json({ error: 'Hiba a számla módosításánál' });
+    }
 });
 
 app.delete('/api/records/:id', verifyUser, async (req, res) => {
