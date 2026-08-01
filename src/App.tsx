@@ -335,23 +335,34 @@ function App() {
     return categories.filter(c => allowedNames.includes(c.Name));
   }, [categories, selectedAssetId, assetCategoryMap]);
 
+  // FIX: TELJES, SZŰRETLEN TRANZAKCIÓS MESTERLISTA (Óraállások + Számlák együtt!)
   const combinedList = useMemo(() => {
-    return [
-      ...(filter === 'Összes' || filter === 'Összes kiadás' ? [] : records.filter(r => (selectedAssetId === 'all' || String(r.AssetId) === String(selectedAssetId)) && r.Type === filter).map(r => ({ ...r, lType: 'meter', d: r.FormattedDate }))),
-      ...invoices.filter(i => {
-        if (selectedAssetId !== 'all' && String(i.AssetId) !== String(selectedAssetId)) return false;
-        if (filter === 'Összes') return true;
-        if (filter === 'Összes kiadás') return categories.find(c => c.Name === i.Type)?.Type !== 'income';
-        return i.Type === filter;
-      }).map(i => ({ ...i, lType: 'invoice', Value: i.Amount, d: i.Month }))
-    ].sort((a, b) => new Date(b.d).getTime() - new Date(a.d).getTime());
-  }, [records, invoices, selectedAssetId, filter, categories]);
+    const safeRecords = Array.isArray(records) ? records : [];
+    const safeInvoices = Array.isArray(invoices) ? invoices : [];
+
+    const formattedRecords = safeRecords.map(r => ({
+      ...r,
+      lType: 'meter',
+      d: r.FormattedDate || r.Date
+    }));
+
+    const formattedInvoices = safeInvoices.map(i => ({
+      ...i,
+      lType: 'invoice',
+      Value: i.Amount,
+      d: i.Month
+    }));
+
+    return [...formattedRecords, ...formattedInvoices].sort(
+      (a, b) => new Date(b.d).getTime() - new Date(a.d).getTime()
+    );
+  }, [records, invoices]);
 
   const filteredCombinedList = useMemo(() => {
     return combinedList.filter((item: any) => {
       const asset = assets.find(a => String(a.Id) === String(item.AssetId));
       const assetName = asset ? asset.FriendlyName.toLowerCase() : '';
-      const itemType = item.Type.toLowerCase();
+      const itemType = item.Type ? item.Type.toLowerCase() : '';
       
       const searchMatch = 
         itemType.includes(txSearch.toLowerCase()) || 
@@ -365,14 +376,13 @@ function App() {
     });
   }, [combinedList, txSearch, txAssetFilter, txCategoryFilter, assets]);
 
-  // --- 5. SZEKCIÓ: PRECIZÍS KATEGÓRIA-ALAPÚ FOGYASZTÁSI MOTOR (JAVÍTVA!) ---
+  // --- 5. SZEKCIÓ: NAPTÁRI HÓNAP ALAPÚ FOGYASZTÁSI MOTOR ---
   const chartData = useMemo(() => {
     const dataMap: { [key: string]: any } = {};
     const fRec = records.filter((r: any) => selectedAssetId === 'all' || String(r.AssetId) === String(selectedAssetId));
     const fInv = invoices.filter((i: any) => selectedAssetId === 'all' || String(i.AssetId) === String(selectedAssetId));
 
     if (displayMode === 'usage') {
-      // 1. Csoportosítás ESZKÖZ ÉS KATEGÓRIA TÍPUS szerint is (Gáz, Áram külön!)
       const assetTypeGroupMap: { [key: string]: { [catType: string]: any[] } } = {};
       
       fRec.filter((r: any) => (filter === 'Összes' || filter === 'Összes kiadás' ? true : r.Type === filter)).forEach((r: any) => {
@@ -381,7 +391,6 @@ function App() {
         assetTypeGroupMap[r.AssetId][r.Type].push(r);
       });
 
-      // 2. Kiszámoljuk a havi fogyasztásokat külön-külön minden kategóriára
       Object.keys(assetTypeGroupMap).forEach(assetId => {
         Object.keys(assetTypeGroupMap[assetId]).forEach(catType => {
           const sortedRecords = assetTypeGroupMap[assetId][catType].sort((a: any, b: any) => new Date(a.FormattedDate).getTime() - new Date(b.FormattedDate).getTime());
