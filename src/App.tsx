@@ -293,7 +293,7 @@ function App() {
     setValue('');
   }
 
-  // --- 4. SZEKCIÓ: AUTOMATIKUS EFFEKTEK ÉS SZINKRONOK ---
+  // --- 4. SZEKCIÓ: AUTOMATIKUS SZINKRON EFFEKTEK ---
   useEffect(() => {
     const savedToken = localStorage.getItem('userToken');
     if (savedToken) handleLoginSuccess(savedToken);
@@ -335,35 +335,23 @@ function App() {
     return categories.filter(c => allowedNames.includes(c.Name));
   }, [categories, selectedAssetId, assetCategoryMap]);
 
-  // FIX: A TELJES TRANZAKCIÓS LISTA ÖSSZEÁLLÍTÁSA (ÓRAÁLLÁSOK + SZÁMLÁK EGYÜTT!)
   const combinedList = useMemo(() => {
-    const safeRecords = Array.isArray(records) ? records : [];
-    const safeInvoices = Array.isArray(invoices) ? invoices : [];
+    return [
+      ...(filter === 'Összes' || filter === 'Összes kiadás' ? [] : records.filter(r => (selectedAssetId === 'all' || String(r.AssetId) === String(selectedAssetId)) && r.Type === filter).map(r => ({ ...r, lType: 'meter', d: r.FormattedDate }))),
+      ...invoices.filter(i => {
+        if (selectedAssetId !== 'all' && String(i.AssetId) !== String(selectedAssetId)) return false;
+        if (filter === 'Összes') return true;
+        if (filter === 'Összes kiadás') return categories.find(c => c.Name === i.Type)?.Type !== 'income';
+        return i.Type === filter;
+      }).map(i => ({ ...i, lType: 'invoice', Value: i.Amount, d: i.Month }))
+    ].sort((a, b) => new Date(b.d).getTime() - new Date(a.d).getTime());
+  }, [records, invoices, selectedAssetId, filter, categories]);
 
-    const formattedRecords = safeRecords.map(r => ({
-      ...r,
-      lType: 'meter',
-      d: r.FormattedDate || r.Date
-    }));
-
-    const formattedInvoices = safeInvoices.map(i => ({
-      ...i,
-      lType: 'invoice',
-      Value: i.Amount,
-      d: i.Month
-    }));
-
-    return [...formattedRecords, ...formattedInvoices].sort(
-      (a, b) => new Date(b.d).getTime() - new Date(a.d).getTime()
-    );
-  }, [records, invoices]);
-
-  // A Tranzakciók fül saját szűrői (Keresőmező, Eszköz választó, Kategória választó)
   const filteredCombinedList = useMemo(() => {
     return combinedList.filter((item: any) => {
       const asset = assets.find(a => String(a.Id) === String(item.AssetId));
       const assetName = asset ? asset.FriendlyName.toLowerCase() : '';
-      const itemType = item.Type ? item.Type.toLowerCase() : '';
+      const itemType = item.Type.toLowerCase();
       
       const searchMatch = 
         itemType.includes(txSearch.toLowerCase()) || 
@@ -377,52 +365,55 @@ function App() {
     });
   }, [combinedList, txSearch, txAssetFilter, txCategoryFilter, assets]);
 
-  // --- 5. SZEKCIÓ: NAPTÁRI HÓNAP ALAPÚ FOGYASZTÁSI MOTOR ---
+  // --- 5. SZEKCIÓ: PRECIZÍS KATEGÓRIA-ALAPÚ FOGYASZTÁSI MOTOR (JAVÍTVA!) ---
   const chartData = useMemo(() => {
     const dataMap: { [key: string]: any } = {};
-    const safeRecords = Array.isArray(records) ? records : [];
-    const safeInvoices = Array.isArray(invoices) ? invoices : [];
-
-    const fRec = safeRecords.filter((r: any) => selectedAssetId === 'all' || String(r.AssetId) === String(selectedAssetId));
-    const fInv = safeInvoices.filter((i: any) => selectedAssetId === 'all' || String(i.AssetId) === String(selectedAssetId));
+    const fRec = records.filter((r: any) => selectedAssetId === 'all' || String(r.AssetId) === String(selectedAssetId));
+    const fInv = invoices.filter((i: any) => selectedAssetId === 'all' || String(i.AssetId) === String(selectedAssetId));
 
     if (displayMode === 'usage') {
-      const assetsMap: { [key: string]: any[] } = {};
+      // 1. Csoportosítás ESZKÖZ ÉS KATEGÓRIA TÍPUS szerint is (Gáz, Áram külön!)
+      const assetTypeGroupMap: { [key: string]: { [catType: string]: any[] } } = {};
+      
       fRec.filter((r: any) => (filter === 'Összes' || filter === 'Összes kiadás' ? true : r.Type === filter)).forEach((r: any) => {
-        if (!assetsMap[r.AssetId]) assetsMap[r.AssetId] = [];
-        assetsMap[r.AssetId].push(r);
+        if (!assetTypeGroupMap[r.AssetId]) assetTypeGroupMap[r.AssetId] = {};
+        if (!assetTypeGroupMap[r.AssetId][r.Type]) assetTypeGroupMap[r.AssetId][r.Type] = [];
+        assetTypeGroupMap[r.AssetId][r.Type].push(r);
       });
 
-      Object.keys(assetsMap).forEach(assetId => {
-        const sortedRecords = assetsMap[assetId].sort((a: any, b: any) => new Date(a.FormattedDate).getTime() - new Date(b.FormattedDate).getTime());
-        
-        const firstReadingPerMonth: { [key: string]: number } = {};
-        sortedRecords.forEach((r: any) => {
-          const monthKey = String(r.FormattedDate).substring(0, 7);
-          if (firstReadingPerMonth[monthKey] === undefined) {
-            firstReadingPerMonth[monthKey] = parseFloat(r.Value);
+      // 2. Kiszámoljuk a havi fogyasztásokat külön-külön minden kategóriára
+      Object.keys(assetTypeGroupMap).forEach(assetId => {
+        Object.keys(assetTypeGroupMap[assetId]).forEach(catType => {
+          const sortedRecords = assetTypeGroupMap[assetId][catType].sort((a: any, b: any) => new Date(a.FormattedDate).getTime() - new Date(b.FormattedDate).getTime());
+          
+          const firstReadingPerMonth: { [key: string]: number } = {};
+          sortedRecords.forEach((r: any) => {
+            const monthKey = r.FormattedDate.substring(0, 7);
+            if (firstReadingPerMonth[monthKey] === undefined) {
+              firstReadingPerMonth[monthKey] = parseFloat(r.Value);
+            }
+          });
+
+          const months = Object.keys(firstReadingPerMonth).sort();
+
+          for (let i = 0; i < months.length - 1; i++) {
+            const currentMonth = months[i];
+            const nextMonth = months[i + 1];
+            
+            const v1 = firstReadingPerMonth[currentMonth];
+            const v2 = firstReadingPerMonth[nextMonth];
+            const diff = v2 - v1;
+
+            if (diff >= 0) {
+              const chartKey = viewMode === 'monthly' ? currentMonth : currentMonth.substring(0, 4);
+              const asset = assets.find(a => String(a.Id) === String(assetId));
+              const label = asset ? asset.FriendlyName : 'Egyéb';
+              
+              if (!dataMap[chartKey]) dataMap[chartKey] = { label: chartKey };
+              dataMap[chartKey][label] = (dataMap[chartKey][label] || 0) + diff;
+            }
           }
         });
-
-        const months = Object.keys(firstReadingPerMonth).sort();
-
-        for (let i = 0; i < months.length - 1; i++) {
-          const currentMonth = months[i];
-          const nextMonth = months[i + 1];
-          
-          const v1 = firstReadingPerMonth[currentMonth];
-          const v2 = firstReadingPerMonth[nextMonth];
-          const diff = v2 - v1;
-
-          if (diff >= 0) {
-            const chartKey = viewMode === 'monthly' ? currentMonth : currentMonth.substring(0, 4);
-            const asset = assets.find(a => String(a.Id) === String(assetId));
-            const label = asset ? asset.FriendlyName : 'Egyéb';
-            
-            if (!dataMap[chartKey]) dataMap[chartKey] = { label: chartKey };
-            dataMap[chartKey][label] = (dataMap[chartKey][label] || 0) + diff;
-          }
-        }
       });
     } else {
       const keyLen = viewMode === 'monthly' ? 7 : 4;
