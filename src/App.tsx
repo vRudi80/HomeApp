@@ -450,6 +450,25 @@ function App() {
       : (chartRange === 'all' ? sorted : sorted.slice(-chartRange));
   }, [records, invoices, assets, filter, displayMode, viewMode, selectedAssetId, chartRange, customStartDate, customEndDate]);
 
+  // --- EGYEDI DUPONT-SZŰRT JELMAGYARÁZAT (LEGEND) RENDERELŐ ---
+  const renderCustomLegend = (props: any) => {
+    const { payload } = props;
+    if (!payload) return null;
+    // Kiszűrjük a dupla bejegyzéseket, csak a sima eszközneveket hagyjuk meg
+    const filteredPayload = payload.filter((entry: any) => !entry.dataKey || !entry.dataKey.endsWith('_income'));
+
+    return (
+      <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: '12px', paddingTop: '10px', fontSize: '11px' }}>
+        {filteredPayload.map((entry: any, index: number) => (
+          <div key={`legend-${index}`} style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+            <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: entry.color, display: 'inline-block' }} />
+            <span style={{ color: '#64748b', fontWeight: 600 }}>{entry.value}</span>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
   // --- TOOLTIP RAJZOLÓ ---
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
@@ -662,14 +681,15 @@ function App() {
                           tickFormatter={(val) => val >= 1000 ? `${(val / 1000).toLocaleString()}k` : val}
                         />
                         <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(0,0,0,0.01)' }} />
-                        <Legend iconType="circle" wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
+                        
+                        {/* GARANTÁLTAN DUPONT-MENTES JELMAGYARÁZAT */}
+                        <Legend content={renderCustomLegend} />
                         
                         {(selectedAssetId === 'all' ? assets : assets.filter(a => String(a.Id) === String(selectedAssetId))).map((asset, idx) => {
                           const color = ASSET_COLORS[idx % ASSET_COLORS.length];
                           return (
                             <React.Fragment key={asset.Id}>
                               <Bar dataKey={asset.FriendlyName} name={asset.FriendlyName} stackId="expense" fill={color} radius={[3,3,0,0]} />
-                              {/* FIX: legendType="none" beállítással elrejtettük a bevételeket a jelmagyarázatból */}
                               <Bar 
                                 dataKey={`${asset.FriendlyName}_income`} 
                                 name={`${asset.FriendlyName} (Bevétel)`} 
@@ -677,7 +697,6 @@ function App() {
                                 fill={color} 
                                 opacity={0.45} 
                                 radius={[3,3,0,0]}
-                                legendType="none"
                               />
                             </React.Fragment>
                           );
