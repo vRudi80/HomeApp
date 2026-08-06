@@ -52,7 +52,8 @@ function App() {
   });
   const [newCategory, setNewCategory] = useState({ name: '', icon: '📄', type: 'both', isPublic: false });
 
-  const [filter, setFilter] = useState('Összes');
+  // TÖBBSZÖRÖS SZŰRŐ TÖMB
+  const [filter, setFilter] = useState<string[]>(['Összes']);
   const [viewMode, setViewMode] = useState('monthly'); 
   const [displayMode, setDisplayMode] = useState('cost');
   
@@ -93,6 +94,23 @@ function App() {
       console.error(e);
       forceLogout(); 
     }
+  }
+
+  function handleCategoryFilterClick(catName: string) {
+    if (catName === 'Összes' || catName === 'Összes kiadás') {
+      setFilter([catName]);
+      return;
+    }
+
+    setFilter(prev => {
+      const cleanPrev = prev.filter(f => f !== 'Összes' && f !== 'Összes kiadás');
+      if (cleanPrev.includes(catName)) {
+        const updated = cleanPrev.filter(f => f !== catName);
+        return updated.length === 0 ? ['Összes'] : updated;
+      } else {
+        return [...cleanPrev, catName];
+      }
+    });
   }
 
   function getIcon(t: string) {
@@ -375,16 +393,19 @@ function App() {
     });
   }, [combinedList, txSearch, txAssetFilter, txCategoryFilter, assets]);
 
-  // --- 5. SZEKCIÓ: NAPTÁRI HÓNAP ALAPÚ FOGYASZTÁSI MOTOR ---
+  // --- 5. SZEKCIÓ: NAPTÁRI HÓNAP ALAPÚ FOGYASZTÁSI MOTOR (MULTISELECT DYNAMIC FILTER) ---
   const chartData = useMemo(() => {
     const dataMap: { [key: string]: any } = {};
     const fRec = records.filter((r: any) => selectedAssetId === 'all' || String(r.AssetId) === String(selectedAssetId));
     const fInv = invoices.filter((i: any) => selectedAssetId === 'all' || String(i.AssetId) === String(selectedAssetId));
 
+    const isAll = filter.includes('Összes');
+    const isAllExpense = filter.includes('Összes kiadás');
+
     if (displayMode === 'usage') {
       const assetTypeGroupMap: { [key: string]: { [catType: string]: any[] } } = {};
       
-      fRec.filter((r: any) => (filter === 'Összes' || filter === 'Összes kiadás' ? true : r.Type === filter)).forEach((r: any) => {
+      fRec.filter((r: any) => (isAll || isAllExpense ? true : filter.includes(r.Type))).forEach((r: any) => {
         if (!assetTypeGroupMap[r.AssetId]) assetTypeGroupMap[r.AssetId] = {};
         if (!assetTypeGroupMap[r.AssetId][r.Type]) assetTypeGroupMap[r.AssetId][r.Type] = [];
         assetTypeGroupMap[r.AssetId][r.Type].push(r);
@@ -426,9 +447,9 @@ function App() {
     } else {
       const keyLen = viewMode === 'monthly' ? 7 : 4;
       fInv.filter((inv: any) => {
-        if (filter === 'Összes') return true;
-        if (filter === 'Összes kiadás') return categories.find(c => c.Name === inv.Type)?.Type !== 'income';
-        return inv.Type === filter;
+        if (isAll) return true;
+        if (isAllExpense) return categories.find(c => c.Name === inv.Type)?.Type !== 'income';
+        return filter.includes(inv.Type);
       }).forEach((inv: any) => {
         const key = String(inv.Month || "").substring(0, keyLen);
         const asset = assets.find(a => String(a.Id) === String(inv.AssetId));
@@ -448,13 +469,12 @@ function App() {
     return chartRange === 'custom' 
       ? sorted.filter((item: any) => item.label >= customStartDate && item.label <= customEndDate)
       : (chartRange === 'all' ? sorted : sorted.slice(-chartRange));
-  }, [records, invoices, assets, filter, displayMode, viewMode, selectedAssetId, chartRange, customStartDate, customEndDate]);
+  }, [records, invoices, assets, filter, displayMode, viewMode, selectedAssetId, chartRange, customStartDate, customEndDate, categories]);
 
   // --- EGYEDI DUPONT-SZŰRT JELMAGYARÁZAT (LEGEND) RENDERELŐ ---
   const renderCustomLegend = (props: any) => {
     const { payload } = props;
     if (!payload) return null;
-    // Kiszűrjük a dupla bejegyzéseket, csak a sima eszközneveket hagyjuk meg
     const filteredPayload = payload.filter((entry: any) => !entry.dataKey || !entry.dataKey.endsWith('_income'));
 
     return (
@@ -618,21 +638,39 @@ function App() {
 
                 <section className="main-viewport-pane">
                   <div className="ui-widget-card">
+                    {/* CHIP SZŰRŐK TÖBBSZÖRÖS KIJELÖLÉSSEL */}
                     <div className="grid-wrapping-chips">
-                      <button className={`grid-chip-item ${filter === 'Összes' ? 'active' : ''}`} onClick={() => setFilter('Összes')} style={filter === 'Összes' ? {backgroundColor: getColor('Összes'), color:'white'} : {}}>📊 Összesen</button>
+                      <button 
+                        className={`grid-chip-item ${filter.includes('Összes') ? 'active' : ''}`} 
+                        onClick={() => handleCategoryFilterClick('Összes')} 
+                        style={filter.includes('Összes') ? {backgroundColor: getColor('Összes'), color:'white'} : {}}
+                      >
+                        📊 Összesen
+                      </button>
                       
                       {displayMode === 'cost' && (
                         <button 
-                          className={`grid-chip-item ${filter === 'Összes kiadás' ? 'active' : ''}`} 
-                          onClick={() => setFilter('Összes kiadás')} 
-                          style={filter === 'Összes kiadás' ? {backgroundColor: getColor('Összes kiadás'), color:'white'} : {}}
+                          className={`grid-chip-item ${filter.includes('Összes kiadás') ? 'active' : ''}`} 
+                          onClick={() => handleCategoryFilterClick('Összes kiadás')} 
+                          style={filter.includes('Összes kiadás') ? {backgroundColor: getColor('Összes kiadás'), color:'white'} : {}}
                         >
                           📉 Összes kiadás
                         </button>
                       )}
-                      {visibleCategories.map(c => (
-                        <button key={c.Id} className={`grid-chip-item ${filter === c.Name ? 'active' : ''}`} onClick={() => setFilter(c.Name)} style={filter === c.Name ? {backgroundColor: getColor(c.Name), color: 'white'} : {}}>{c.Icon} {c.Name}</button>
-                      ))}
+                      
+                      {visibleCategories.map(c => {
+                        const isSelected = filter.includes(c.Name);
+                        return (
+                          <button 
+                            key={c.Id} 
+                            className={`grid-chip-item ${isSelected ? 'active' : ''}`} 
+                            onClick={() => handleCategoryFilterClick(c.Name)} 
+                            style={isSelected ? {backgroundColor: getColor(c.Name), color: 'white'} : {}}
+                          >
+                            {c.Icon} {c.Name}
+                          </button>
+                        );
+                      })}
                     </div>
 
                     <div className="chart-filter-controls-row">
@@ -681,8 +719,6 @@ function App() {
                           tickFormatter={(val) => val >= 1000 ? `${(val / 1000).toLocaleString()}k` : val}
                         />
                         <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(0,0,0,0.01)' }} />
-                        
-                        {/* GARANTÁLTAN DUPONT-MENTES JELMAGYARÁZAT */}
                         <Legend content={renderCustomLegend} />
                         
                         {(selectedAssetId === 'all' ? assets : assets.filter(a => String(a.Id) === String(selectedAssetId))).map((asset, idx) => {
