@@ -335,7 +335,6 @@ function App() {
     return categories.filter(c => allowedNames.includes(c.Name));
   }, [categories, selectedAssetId, assetCategoryMap]);
 
-  // FIX: TELJES, SZŰRETLEN TRANZAKCIÓS MESTERLISTA (Óraállások + Számlák együtt!)
   const combinedList = useMemo(() => {
     const safeRecords = Array.isArray(records) ? records : [];
     const safeInvoices = Array.isArray(invoices) ? invoices : [];
@@ -670,6 +669,7 @@ function App() {
                           return (
                             <React.Fragment key={asset.Id}>
                               <Bar dataKey={asset.FriendlyName} name={asset.FriendlyName} stackId="expense" fill={color} radius={[3,3,0,0]} />
+                              {/* FIX: legendType="none" beállítással elrejtettük a bevételeket a jelmagyarázatból */}
                               <Bar 
                                 dataKey={`${asset.FriendlyName}_income`} 
                                 name={`${asset.FriendlyName} (Bevétel)`} 
@@ -677,6 +677,7 @@ function App() {
                                 fill={color} 
                                 opacity={0.45} 
                                 radius={[3,3,0,0]}
+                                legendType="none"
                               />
                             </React.Fragment>
                           );
