@@ -14,6 +14,15 @@ const PIE_COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6'];
 
 const ADMIN_EMAILS = ['kovari.rudolf@gmail.com'];
 
+// SÁVOS ÁRAMDÍJ KISZÁMÍTÓ SEGÉDFÜGGVÉNY (210 kWh-ig kedvezményes, felette piaci ár)
+function calculateTieredPowerCost(kwh: number, priceLow = 36, priceHigh = 70.1, limit = 210): number {
+  if (kwh <= 0) return 0;
+  if (kwh <= limit) {
+    return kwh * priceLow;
+  }
+  return (limit * priceLow) + ((kwh - limit) * priceHigh);
+}
+
 function App() {
   // --- 1. SZEKCIÓ: ÁLLAPOTOK DEKLARÁCIÓJA ---
   const [user, setUser] = useState<any>(null);
@@ -540,7 +549,7 @@ function App() {
     return Array.from(set);
   }, [evLogs]);
 
-  // --- 5. SZEKCIÓ: EXCEL-ALAPÚ PONTOS SAJÁT FOGYASZTÁSÚ MEGTÉRÜLÉSI MOTOR ---
+  // --- 5. SZEKCIÓ: EXCEL-ALAPÚ SÁVOS ÁRAM MEGTÉRÜLÉSI MOTOR ---
   const roiMetrics = useMemo(() => {
     let totalKwh = 0;
     let totalPaidHuf = 0;
@@ -575,7 +584,7 @@ function App() {
       market_kwh_price: 70.1
     };
 
-    // 1. AUTÓ MEGTARÍTÁS
+    // 1. AUTÓ MEGTARÍTÁS (BENZIN EGYENÉRTÉK - KIFIZETETT TÖLTÉS)
     let totalGasolineEquivalentHuf = 0;
     evLogs.forEach(log => {
       const logMonth = String(log.date).substring(0, 7);
@@ -590,20 +599,27 @@ function App() {
 
     const evSavingsHuf = totalGasolineEquivalentHuf - totalPaidHuf;
 
-    // 2. NAPELEM HÁZTARTÁSI ÁRAM MEGTARÍTÁS: (Összes Fogyasztás - Hálózati Áram = Megspórolt Saját Napelem Áram)
+    // 2. NAPELEM ÁRAM MEGTARÍTÁS (SÁVOS KISZÁMÍTÁS: 210 kWh-ig 36 Ft, FELETTE 70.1 Ft)
     let solarHouseholdSavingsHuf = 0;
     benchmarks.forEach(bm => {
       const totalCons = parseFloat(bm.total_consumed_kwh || 0);
       const gridKwh = parseFloat(bm.grid_kwh || 0);
-      const gridPrice = parseFloat(bm.grid_kwh_price || 36);
+      const lowPrice = parseFloat(bm.grid_kwh_price || 36);
+      const highPrice = parseFloat(bm.market_kwh_price || 70.1);
 
-      // Ha meg van adva az összes fogyasztás, abból vonjuk ki a hálózatit
-      const selfConsumedSolarKwh = Math.max(0, totalCons - gridKwh);
-      
-      solarHouseholdSavingsHuf += selfConsumedSolarKwh * gridPrice;
+      if (totalCons > 0) {
+        // Napelem nélküli elméleti villanyszámla (Sávos)
+        const theoreticalBill = calculateTieredPowerCost(totalCons, lowPrice, highPrice, 210);
+        
+        // Napelemmel ténylegesen kifizetett villanyszámla (Sávos)
+        const actualBill = calculateTieredPowerCost(gridKwh, lowPrice, highPrice, 210);
+
+        // A kettő különbsége a napelemmel megspórolt forint
+        solarHouseholdSavingsHuf += Math.max(0, theoreticalBill - actualBill);
+      }
     });
 
-    // 3. ÖSSZES MEGTARÍTÁS
+    // 3. ÖSSZES MEGTARÍTÁS ÉS MEGTÉRÜLÉS
     const totalSavingsHuf = evSavingsHuf + solarHouseholdSavingsHuf;
     const totalInvestment = parseFloat(latestBm.solar_investment || 0) + parseFloat(latestBm.ev_investment || 0);
     const currentBalance = totalSavingsHuf - totalInvestment;
@@ -1075,7 +1091,7 @@ function App() {
                     </div>
                   )}
 
-                  {/* NAPELEM ÉS HAVI REFERENCIA FORM (ÁRAMFOGYASZTÁS MEZŐVEL!) */}
+                  {/* NAPELEM ÉS HAVI REFERENCIA FORM */}
                   {!isReadOnly && (
                     <div className="ui-widget-card">
                       <h3 className="card-heading-clean">☀️ Napelem & Áram Referencia</h3>
