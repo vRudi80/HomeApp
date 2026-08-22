@@ -15,7 +15,7 @@ const PIE_COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6'];
 const ADMIN_EMAILS = ['kovari.rudolf@gmail.com'];
 
 function App() {
-  // --- 1. SZEKCIÓ: MINDEN ÁLLAPOT DEKLARÁCIÓJA ---
+  // --- 1. SZEKCIÓ: ÁLLAPOTOK DEKLARÁCIÓJA ---
   const [user, setUser] = useState<any>(null);
   const [records, setRecords] = useState<any[]>([]);
   const [invoices, setInvoices] = useState<any[]>([]);
@@ -26,7 +26,6 @@ function App() {
   const [viewingUserId, setViewingUserId] = useState<string | null>(null);
   const [selectedAssetId, setSelectedAssetId] = useState<string>('all');
   
-  // NAVIGÁCIÓS FÜLEK
   const [activeTab, setActiveTab] = useState<'dashboard' | 'transactions' | 'settings' | 'ev-solar'>('dashboard');
   
   const [txSearch, setTxSearch] = useState('');
@@ -42,7 +41,6 @@ function App() {
   const [meterDate, setMeterDate] = useState(new Date().toISOString().split('T')[0]);
   const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().split('T')[0]);
 
-  const [editingAssetId, setEditingAssetId] = useState<number | null>(null);
   const [editingCategoryId, setEditingCategoryId] = useState<number | null>(null);
   const [shareEmail, setShareEmail] = useState('');
   
@@ -65,13 +63,16 @@ function App() {
 
   const [assetCategoryMap, setAssetCategoryMap] = useState<{ [key: string]: string[] }>({});
 
-  // --- ÚJ: EV ÉS NAPELEM STATE-EK ---
+  // --- EV ÉS NAPELEM STATE-EK ---
   const [evLogs, setEvLogs] = useState<any[]>([]);
   const [benchmarks, setBenchmarks] = useState<any[]>([]);
+  const [editingEvLogId, setEditingEvLogId] = useState<number | null>(null);
 
   const [newEvLog, setNewEvLog] = useState({
     date: new Date().toISOString().split('T')[0],
     location: 'Napelem',
+    start_soc: '',
+    end_soc: '',
     kwh_amount: '',
     cost_huf: '0',
     charge_source: 'Napelem',
@@ -83,7 +84,10 @@ function App() {
     month: new Date().toISOString().substring(0, 7),
     gasoline_price: '595',
     avg_consumption: '5.95',
+    solar_kwh: '0',
+    grid_kwh: '0',
     grid_kwh_price: '36',
+    market_kwh_price: '70.1',
     solar_investment: '1950400',
     ev_investment: '0'
   });
@@ -252,13 +256,17 @@ function App() {
     if (res.ok) { setValue(''); setEditingRecordId(null); setEditingRecordLType(null); fetchAll(user.token, viewingUserId!); }
   }
 
+  // EV TÖLTÉS MENTÉSE ÉS SZERKESZTÉSE
   async function handleEvLogSave() {
     if (!newEvLog.kwh_amount) return alert("KWh megadása kötelező!");
-    const res = await fetch(`${BACKEND_URL}/api/ev-logs`, {
-      method: 'POST',
+    const url = editingEvLogId ? `${BACKEND_URL}/api/ev-logs/${editingEvLogId}` : `${BACKEND_URL}/api/ev-logs`;
+    const res = await fetch(url, {
+      method: editingEvLogId ? 'PUT' : 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${user.token}` },
       body: JSON.stringify({
         ...newEvLog,
+        start_soc: newEvLog.start_soc ? parseInt(newEvLog.start_soc) : null,
+        end_soc: newEvLog.end_soc ? parseInt(newEvLog.end_soc) : null,
         kwh_amount: parseFloat(newEvLog.kwh_amount),
         cost_huf: parseFloat(newEvLog.cost_huf || '0'),
         driven_km: parseInt(newEvLog.driven_km || '0'),
@@ -266,9 +274,12 @@ function App() {
       })
     });
     if (res.ok) {
+      setEditingEvLogId(null);
       setNewEvLog({
         date: new Date().toISOString().split('T')[0],
         location: 'Napelem',
+        start_soc: '',
+        end_soc: '',
         kwh_amount: '',
         cost_huf: '0',
         charge_source: 'Napelem',
@@ -279,6 +290,37 @@ function App() {
     }
   }
 
+  function handleEditEvLog(log: any) {
+    setEditingEvLogId(log.id);
+    setNewEvLog({
+      date: String(log.date).substring(0, 10),
+      location: log.location || '',
+      start_soc: log.start_soc !== null ? String(log.start_soc) : '',
+      end_soc: log.end_soc !== null ? String(log.end_soc) : '',
+      kwh_amount: String(log.kwh_amount || ''),
+      cost_huf: String(log.cost_huf || '0'),
+      charge_source: log.charge_source || 'Napelem',
+      driven_km: String(log.driven_km || ''),
+      assetId: log.asset_id ? String(log.asset_id) : ''
+    });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  function cancelEvLogEdit() {
+    setEditingEvLogId(null);
+    setNewEvLog({
+      date: new Date().toISOString().split('T')[0],
+      location: 'Napelem',
+      start_soc: '',
+      end_soc: '',
+      kwh_amount: '',
+      cost_huf: '0',
+      charge_source: 'Napelem',
+      driven_km: '',
+      assetId: ''
+    });
+  }
+
   async function handleBenchmarkSave() {
     const res = await fetch(`${BACKEND_URL}/api/benchmarks`, {
       method: 'POST',
@@ -287,7 +329,10 @@ function App() {
         ...benchmarkForm,
         gasoline_price: parseFloat(benchmarkForm.gasoline_price),
         avg_consumption: parseFloat(benchmarkForm.avg_consumption),
-        grid_kwh_price: parseFloat(benchmarkForm.grid_kwh_price),
+        solar_kwh: parseFloat(benchmarkForm.solar_kwh || '0'),
+        grid_kwh: parseFloat(benchmarkForm.grid_kwh || '0'),
+        grid_kwh_price: parseFloat(benchmarkForm.grid_kwh_price || '36'),
+        market_kwh_price: parseFloat(benchmarkForm.market_kwh_price || '70.1'),
         solar_investment: parseFloat(benchmarkForm.solar_investment || '1950400'),
         ev_investment: parseFloat(benchmarkForm.ev_investment || '0')
       })
@@ -360,27 +405,6 @@ function App() {
       method: 'DELETE', headers: { 'Authorization': `Bearer ${user.token}` }
     });
     if (res.ok) fetchMyShares(user.token);
-  }
-
-  function handleEditRecord(item: any) {
-    setEditingRecordId(item.Id || item.id);
-    setEditingRecordLType(item.lType);
-    setRecordMode(item.lType);
-    setTargetAssetId(String(item.AssetId));
-    setType(item.Type);
-    setValue(String(item.Value || item.Amount || ''));
-    
-    const dateStr = String(item.d).substring(0, 10);
-    if (item.lType === 'meter') setMeterDate(dateStr);
-    else setInvoiceDate(dateStr);
-    setActiveTab('dashboard');
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  }
-
-  function cancelRecordEdit() {
-    setEditingRecordId(null);
-    setEditingRecordLType(null);
-    setValue('');
   }
 
   // --- 4. SZEKCIÓ: AUTOMATIKUS EFFEKTEK ---
@@ -465,14 +489,13 @@ function App() {
     });
   }, [combinedList, txSearch, txAssetFilter, txCategoryFilter, assets]);
 
-  // Unique charging locations list for datalist autocompletion
   const uniqueLocations = useMemo(() => {
     const set = new Set<string>(['Napelem', 'Otthon', 'Tesla Supercharger', 'Ionity', 'Tea', 'Garázs Tondo']);
     evLogs.forEach(log => { if (log.location) set.add(log.location); });
     return Array.from(set);
   }, [evLogs]);
 
-  // --- 5. SZEKCIÓ: DINAMIKUS EV & NAPELEM MEGTÉRÜLÉSI MOTOR ---
+  // --- 5. SZEKCIÓ: EXCEL-ALAPÚ TELJES MEGTÉRÜLÉSI MOTOR ---
   const roiMetrics = useMemo(() => {
     let totalKwh = 0;
     let totalPaidHuf = 0;
@@ -498,18 +521,17 @@ function App() {
       locationBreakdown[loc] = (locationBreakdown[loc] || 0) + kwh;
     });
 
-    // Adott hónapok szerinti benzinmegtakarítás kiszámítása
-    let totalGasolineEquivalentHuf = 0;
-    
-    // Alapértelmezett legfrissebb referencia
     const latestBm = benchmarks[0] || {
       gasoline_price: 595,
       avg_consumption: 5.95,
       solar_investment: 1950400,
-      ev_investment: 0
+      ev_investment: 0,
+      grid_kwh_price: 36,
+      market_kwh_price: 70.1
     };
 
-    // Ha vannak kilométer bejegyzések, kiszámoljuk a havonta változó benzináras egyenértéket
+    // 1. AUTÓ MEGTARÍTÁS (BENZIN EGYENÉRTÉK - KIFIZETETT TÖLTÉS)
+    let totalGasolineEquivalentHuf = 0;
     evLogs.forEach(log => {
       const logMonth = String(log.date).substring(0, 7);
       const bm = benchmarks.find(b => b.month === logMonth) || latestBm;
@@ -521,9 +543,31 @@ function App() {
       }
     });
 
-    const netEvSavingsHuf = totalGasolineEquivalentHuf - totalPaidHuf;
+    const evSavingsHuf = totalGasolineEquivalentHuf - totalPaidHuf;
+
+    // 2. NAPELEM HÁZTARTÁSI ÁRAM MEGTARÍTÁS (Havi termelés * hálózati/piaci ár)
+    let solarHouseholdSavingsHuf = 0;
+    benchmarks.forEach(bm => {
+      const sKwh = parseFloat(bm.solar_kwh || 0);
+      const gridPrice = parseFloat(bm.grid_kwh_price || 36);
+      solarHouseholdSavingsHuf += sKwh * gridPrice;
+    });
+
+    // 3. ÖSSZES MEGTARÍTÁS
+    const totalSavingsHuf = evSavingsHuf + solarHouseholdSavingsHuf;
     const totalInvestment = parseFloat(latestBm.solar_investment || 0) + parseFloat(latestBm.ev_investment || 0);
-    const currentBalance = netEvSavingsHuf - totalInvestment;
+    const currentBalance = totalSavingsHuf - totalInvestment;
+
+    // 4. ELTELT NAPOK ÉS VÁRHATÓ MEGTÉRÜLÉSI DÁTUM (Excel AA-AB oszlopok)
+    const firstDate = evLogs.length > 0 ? new Date(evLogs[evLogs.length - 1].date) : new Date();
+    const elapsedDays = Math.max(1, Math.round((new Date().getTime() - firstDate.getTime()) / (1000 * 60 * 60 * 24)));
+    
+    const dailySavingsHuf = totalSavingsHuf / elapsedDays;
+    const remainingHuf = Math.max(0, totalInvestment - totalSavingsHuf);
+    const remainingDays = dailySavingsHuf > 0 ? Math.round(remainingHuf / dailySavingsHuf) : 0;
+
+    const estimatedPaybackDate = new Date();
+    estimatedPaybackDate.setDate(estimatedPaybackDate.getDate() + remainingDays);
 
     const greenRatio = totalKwh > 0 ? (solarKwh / totalKwh) * 100 : 0;
     const costPerKm = totalKm > 0 ? totalPaidHuf / totalKm : 0;
@@ -540,9 +584,15 @@ function App() {
       solarKwh,
       greenRatio,
       costPerKm,
-      netEvSavingsHuf,
+      evSavingsHuf,
+      solarHouseholdSavingsHuf,
+      totalSavingsHuf,
       totalInvestment,
       currentBalance,
+      elapsedDays,
+      dailySavingsHuf,
+      remainingDays,
+      estimatedPaybackDate: estimatedPaybackDate.toISOString().substring(0, 10),
       locationPieData
     };
   }, [evLogs, benchmarks]);
@@ -713,7 +763,6 @@ function App() {
     <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
       <div className="app-container">
         
-        {/* DATALIST AZ EV TÖLTŐHELYEK SZABAD BEÍRÁSÁHOZ */}
         <datalist id="charging-locations-list">
           {uniqueLocations.map((loc, idx) => (
             <option key={idx} value={loc} />
@@ -911,7 +960,7 @@ function App() {
                 <aside className="sidebar-container">
                   {!isReadOnly && (
                     <div className="ui-widget-card">
-                      <h3 className="card-heading-clean">🔌 Új EV Töltés rögzítése</h3>
+                      <h3 className="card-heading-clean">{editingEvLogId ? "✏️ EV Töltés szerkesztése" : "🔌 Új EV Töltés rögzítése"}</h3>
                       <div className="form-stack-vertical">
                         <div>
                           <label className="input-label-flat">Dátum</label>
@@ -941,6 +990,17 @@ function App() {
 
                         <div style={{ display: 'flex', gap: '8px' }}>
                           <div style={{ flex: 1 }}>
+                            <label className="input-label-flat">Kezdő %</label>
+                            <input type="number" className="form-control-select" placeholder="pl. 25%" value={newEvLog.start_soc} onChange={(e) => setNewEvLog({...newEvLog, start_soc: e.target.value})} />
+                          </div>
+                          <div style={{ flex: 1 }}>
+                            <label className="input-label-flat">Feltöltött %</label>
+                            <input type="number" className="form-control-select" placeholder="pl. 80%" value={newEvLog.end_soc} onChange={(e) => setNewEvLog({...newEvLog, end_soc: e.target.value})} />
+                          </div>
+                        </div>
+
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <div style={{ flex: 1 }}>
                             <label className="input-label-flat">Betöltött kWh</label>
                             <input type="number" step="0.01" className="form-control-select" placeholder="kWh" value={newEvLog.kwh_amount} onChange={(e) => setNewEvLog({...newEvLog, kwh_amount: e.target.value})} />
                           </div>
@@ -955,15 +1015,20 @@ function App() {
                           <input type="number" className="form-control-select" placeholder="pl. 150 km" value={newEvLog.driven_km} onChange={(e) => setNewEvLog({...newEvLog, driven_km: e.target.value})} />
                         </div>
 
-                        <button className="btn-submit-form" onClick={handleEvLogSave}>Töltés mentése</button>
+                        <div className="action-buttons-row">
+                          <button className="btn-submit-form" onClick={handleEvLogSave}>
+                            {editingEvLogId ? 'Módosítás mentése' : 'Töltés mentése'}
+                          </button>
+                          {editingEvLogId && <button className="btn-action-primary" style={{backgroundColor: '#64748b'}} onClick={cancelEvLogEdit}>Mégse</button>}
+                        </div>
                       </div>
                     </div>
                   )}
 
-                  {/* HAVI BENZINÁR & REFERENCIA FORM */}
+                  {/* NAPELEM ÉS HAVI REFERENCIA FORM */}
                   {!isReadOnly && (
                     <div className="ui-widget-card">
-                      <h3 className="card-heading-clean">⛽ Havi benzinár referencia</h3>
+                      <h3 className="card-heading-clean">☀️ Napelem & Áram Referencia</h3>
                       <div className="form-stack-vertical">
                         <div>
                           <label className="input-label-flat">Hónap</label>
@@ -971,19 +1036,31 @@ function App() {
                         </div>
                         <div style={{ display: 'flex', gap: '8px' }}>
                           <div style={{ flex: 1 }}>
+                            <label className="input-label-flat">Napelem Termelés (kWh)</label>
+                            <input type="number" className="form-control-select" placeholder="kWh" value={benchmarkForm.solar_kwh} onChange={(e) => setBenchmarkForm({...benchmarkForm, solar_kwh: e.target.value})} />
+                          </div>
+                          <div style={{ flex: 1 }}>
+                            <label className="input-label-flat">Hálózati Áram (kWh)</label>
+                            <input type="number" className="form-control-select" placeholder="kWh" value={benchmarkForm.grid_kwh} onChange={(e) => setBenchmarkForm({...benchmarkForm, grid_kwh: e.target.value})} />
+                          </div>
+                        </div>
+
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <div style={{ flex: 1 }}>
                             <label className="input-label-flat">Benzinár (Ft/l)</label>
                             <input type="number" className="form-control-select" value={benchmarkForm.gasoline_price} onChange={(e) => setBenchmarkForm({...benchmarkForm, gasoline_price: e.target.value})} />
                           </div>
                           <div style={{ flex: 1 }}>
-                            <label className="input-label-flat">Ref. fogy. (l/100km)</label>
+                            <label className="input-label-flat">Ref. Fogy. (l/100km)</label>
                             <input type="number" step="0.1" className="form-control-select" value={benchmarkForm.avg_consumption} onChange={(e) => setBenchmarkForm({...benchmarkForm, avg_consumption: e.target.value})} />
                           </div>
                         </div>
+
                         <div>
                           <label className="input-label-flat">Napelem Beruházás (Ft)</label>
                           <input type="number" className="form-control-select" value={benchmarkForm.solar_investment} onChange={(e) => setBenchmarkForm({...benchmarkForm, solar_investment: e.target.value})} />
                         </div>
-                        <button className="btn-action-primary" onClick={handleBenchmarkSave}>Referencia frissítése</button>
+                        <button className="btn-action-primary" onClick={handleBenchmarkSave}>Adatok mentése</button>
                       </div>
                     </div>
                   )}
@@ -1003,13 +1080,13 @@ function App() {
                     <div className="ui-widget-card kpi-tile">
                       <span className="kpi-label">EV Költség / KM</span>
                       <span className="kpi-value">{roiMetrics.costPerKm.toFixed(1)} Ft/km</span>
-                      <small className="kpi-sub">Összesen megtett: {roiMetrics.totalKm.toLocaleString()} km</small>
+                      <small className="kpi-sub">Megtett: {roiMetrics.totalKm.toLocaleString()} km</small>
                     </div>
 
                     <div className="ui-widget-card kpi-tile">
-                      <span className="kpi-label">Összes Benzin Megtakarítás</span>
-                      <span className="kpi-value font-emerald">+{Math.round(roiMetrics.netEvSavingsHuf).toLocaleString()} Ft</span>
-                      <small className="kpi-sub">Változó havi benzinárakkal számolva</small>
+                      <span className="kpi-label">Összes Megtakarítás</span>
+                      <span className="kpi-value font-emerald">+{Math.round(roiMetrics.totalSavingsHuf).toLocaleString()} Ft</span>
+                      <small className="kpi-sub">EV: {Math.round(roiMetrics.evSavingsHuf).toLocaleString()} Ft | Áram: {Math.round(roiMetrics.solarHouseholdSavingsHuf).toLocaleString()} Ft</small>
                     </div>
 
                     <div className="ui-widget-card kpi-tile">
@@ -1021,15 +1098,19 @@ function App() {
                     </div>
                   </div>
 
-                  {/* PROGRESS BAR ÉS GRAFIKONOK */}
+                  {/* PRECIZÍOS MEGTÉRÜLÉSI DÁTUM ÉS EXCEL ADATOK */}
                   <div className="ui-widget-card">
-                    <h3 className="card-heading-clean">📊 Megtérülés állása (Napelem + EV)</h3>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                      <h3 className="card-heading-clean" style={{ margin: 0 }}>📊 Várható Megtérülés: <span className="highlight-blue">{roiMetrics.estimatedPaybackDate}</span></h3>
+                      <span className="row-badge-type">Napi átlag: +{Math.round(roiMetrics.dailySavingsHuf).toLocaleString()} Ft/nap</span>
+                    </div>
+
                     <div className="roi-progress-wrapper">
-                      <div className="roi-progress-bar" style={{ width: `${Math.min(100, Math.max(0, (roiMetrics.netEvSavingsHuf / (roiMetrics.totalInvestment || 1)) * 100))}%` }} />
+                      <div className="roi-progress-bar" style={{ width: `${Math.min(100, Math.max(0, (roiMetrics.totalSavingsHuf / (roiMetrics.totalInvestment || 1)) * 100))}%` }} />
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '8px', fontSize: '0.8rem', color: '#64748b' }}>
-                      <span>Megtakarítva: {Math.round(roiMetrics.netEvSavingsHuf).toLocaleString()} Ft</span>
-                      <span>Cél: {Math.round(roiMetrics.totalInvestment).toLocaleString()} Ft</span>
+                      <span>Eltelt napok: {roiMetrics.elapsedDays} nap</span>
+                      <span>Hátralévő napok: {roiMetrics.remainingDays} nap</span>
                     </div>
                   </div>
 
@@ -1037,7 +1118,7 @@ function App() {
                     
                     {/* TÖLTŐHELYEK PIE CHART */}
                     <div className="ui-widget-card">
-                      <h3 className="card-heading-clean">🎯 Betöltött kWh Helyszínek Szerint</h3>
+                      <h3 className="card-heading-clean">🎯 Töltőhelyek Megoszlása (kWh)</h3>
                       <ResponsiveContainer width="100%" height={220}>
                         <PieChart>
                           <Pie data={roiMetrics.locationPieData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={70} label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}>
@@ -1050,19 +1131,31 @@ function App() {
                       </ResponsiveContainer>
                     </div>
 
-                    {/* LATEST TÖLTÉSEK LISTÁJA */}
+                    {/* SZERKESZTHETŐ EV TÖLTÉSEK LISTÁJA */}
                     <div className="ui-widget-card scrollable-list" style={{ maxHeight: '280px' }}>
-                      <h3 className="card-heading-clean">📜 Legutóbbi Töltések</h3>
+                      <h3 className="card-heading-clean">📜 Töltési Napló (Szerkeszthető)</h3>
                       <div className="modern-data-table-stack">
                         {evLogs.map((log: any) => (
                           <div key={log.id} className="table-row-card" style={{ padding: '8px 12px' }}>
                             <div>
                               <div style={{ fontWeight: 700, fontSize: '0.85rem' }}>{log.location} ({log.charge_source})</div>
-                              <div style={{ fontSize: '0.75rem', color: '#64748b' }}>{String(log.date).substring(0, 10)} • {log.driven_km} km</div>
+                              <div style={{ fontSize: '0.75rem', color: '#64748b' }}>
+                                {String(log.date).substring(0, 10)} 
+                                {log.start_soc !== null && log.end_soc !== null ? ` • ${log.start_soc}% ➔ ${log.end_soc}%` : ''} 
+                                {log.driven_km ? ` • ${log.driven_km} km` : ''}
+                              </div>
                             </div>
-                            <div style={{ textAlign: 'right' }}>
-                              <div style={{ fontWeight: 700, fontSize: '0.85rem' }} className="font-emerald">{log.kwh_amount} kWh</div>
-                              <div style={{ fontSize: '0.75rem', color: '#64748b' }}>{parseFloat(log.cost_huf).toLocaleString()} Ft</div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                              <div style={{ textAlign: 'right' }}>
+                                <div style={{ fontWeight: 700, fontSize: '0.85rem' }} className="font-emerald">{log.kwh_amount} kWh</div>
+                                <div style={{ fontSize: '0.75rem', color: '#64748b' }}>{parseFloat(log.cost_huf).toLocaleString()} Ft</div>
+                              </div>
+                              {!isReadOnly && (
+                                <div className="row-buttons-trigger">
+                                  <button onClick={() => handleEditEvLog(log)}>✏️</button>
+                                  <button onClick={async () => { if(window.confirm("Biztosan törlöd a töltést?")) { await fetch(`${BACKEND_URL}/api/ev-logs/${log.id}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${user.token}` } }); fetchAll(user.token); } }}>❌</button>
+                                </div>
+                              )}
                             </div>
                           </div>
                         ))}
