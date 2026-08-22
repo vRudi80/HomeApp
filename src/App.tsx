@@ -63,7 +63,7 @@ function App() {
 
   const [assetCategoryMap, setAssetCategoryMap] = useState<{ [key: string]: string[] }>({});
 
-  // --- EV ÉS NAPELEM STATE-EK ---
+  // EV ÉS NAPELEM STATE-EK
   const [evLogs, setEvLogs] = useState<any[]>([]);
   const [benchmarks, setBenchmarks] = useState<any[]>([]);
   const [editingEvLogId, setEditingEvLogId] = useState<number | null>(null);
@@ -95,7 +95,7 @@ function App() {
   const isReadOnly = viewingUserId !== null && viewingUserId !== user?.sub;
   const isAdmin = user && ADMIN_EMAILS.includes(user.email);
 
-  // --- 2. SZEKCIÓ: HOISZTOLT ALAPFÜGGVÉNYEK ---
+  // --- 2. SZEKCIÓ: ALAPFÜGGVÉNYEK ---
   function forceLogout() {
     googleLogout();
     setUser(null);
@@ -225,7 +225,9 @@ function App() {
       setAssets(assetRes.ok ? await assetRes.json() : []);
       setCategories(catRes.ok ? await catRes.json() : []);
       setEvLogs(evRes.ok ? await evRes.json() : []);
-      setBenchmarks(bmRes.ok ? await bmRes.json() : []);
+      
+      const fetchedBm = bmRes.ok ? await bmRes.json() : [];
+      setBenchmarks(fetchedBm);
 
       const acData = acRes.ok ? await acRes.json() : [];
       if (Array.isArray(acData)) {
@@ -238,6 +240,46 @@ function App() {
         setAssetCategoryMap(map);
       }
     } catch (err) { console.error(err); }
+  }
+
+  // AUDO-LOAD RELEVANT MONTHLY BENCHMARK ON MONTH CHANGE
+  function handleBenchmarkMonthChange(newMonth: string) {
+    const existing = benchmarks.find(b => b.month === newMonth);
+    if (existing) {
+      setBenchmarkForm({
+        month: newMonth,
+        gasoline_price: String(existing.gasoline_price ?? '595'),
+        avg_consumption: String(existing.avg_consumption ?? '5.95'),
+        solar_kwh: String(existing.solar_kwh ?? '0'),
+        grid_kwh: String(existing.grid_kwh ?? '0'),
+        grid_kwh_price: String(existing.grid_kwh_price ?? '36'),
+        market_kwh_price: String(existing.market_kwh_price ?? '70.1'),
+        solar_investment: String(existing.solar_investment ?? '1950400'),
+        ev_investment: String(existing.ev_investment ?? '0')
+      });
+    } else {
+      setBenchmarkForm(prev => ({
+        ...prev,
+        month: newMonth,
+        solar_kwh: '0',
+        grid_kwh: '0'
+      }));
+    }
+  }
+
+  function handleEditBenchmark(bm: any) {
+    setBenchmarkForm({
+      month: bm.month,
+      gasoline_price: String(bm.gasoline_price ?? '595'),
+      avg_consumption: String(bm.avg_consumption ?? '5.95'),
+      solar_kwh: String(bm.solar_kwh ?? '0'),
+      grid_kwh: String(bm.grid_kwh ?? '0'),
+      grid_kwh_price: String(bm.grid_kwh_price ?? '36'),
+      market_kwh_price: String(bm.market_kwh_price ?? '70.1'),
+      solar_investment: String(bm.solar_investment ?? '1950400'),
+      ev_investment: String(bm.ev_investment ?? '0')
+    });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
   // --- 3. SZEKCIÓ: ADATMÓDOSÍTÓ METÓDUSOK ---
@@ -256,7 +298,6 @@ function App() {
     if (res.ok) { setValue(''); setEditingRecordId(null); setEditingRecordLType(null); fetchAll(user.token, viewingUserId!); }
   }
 
-  // EV TÖLTÉS MENTÉSE ÉS SZERKESZTÉSE
   async function handleEvLogSave() {
     if (!newEvLog.kwh_amount) return alert("KWh megadása kötelező!");
     const url = editingEvLogId ? `${BACKEND_URL}/api/ev-logs/${editingEvLogId}` : `${BACKEND_URL}/api/ev-logs`;
@@ -530,7 +571,7 @@ function App() {
       market_kwh_price: 70.1
     };
 
-    // 1. AUTÓ MEGTARÍTÁS (BENZIN EGYENÉRTÉK - KIFIZETETT TÖLTÉS)
+    // 1. AUTÓ MEGTARÍTÁS
     let totalGasolineEquivalentHuf = 0;
     evLogs.forEach(log => {
       const logMonth = String(log.date).substring(0, 7);
@@ -545,7 +586,7 @@ function App() {
 
     const evSavingsHuf = totalGasolineEquivalentHuf - totalPaidHuf;
 
-    // 2. NAPELEM HÁZTARTÁSI ÁRAM MEGTARÍTÁS (Havi termelés * hálózati/piaci ár)
+    // 2. NAPELEM HÁZTARTÁSI ÁRAM MEGTARÍTÁS
     let solarHouseholdSavingsHuf = 0;
     benchmarks.forEach(bm => {
       const sKwh = parseFloat(bm.solar_kwh || 0);
@@ -558,7 +599,7 @@ function App() {
     const totalInvestment = parseFloat(latestBm.solar_investment || 0) + parseFloat(latestBm.ev_investment || 0);
     const currentBalance = totalSavingsHuf - totalInvestment;
 
-    // 4. ELTELT NAPOK ÉS VÁRHATÓ MEGTÉRÜLÉSI DÁTUM (Excel AA-AB oszlopok)
+    // 4. ELTELT NAPOK ÉS VÁRHATÓ MEGTÉRÜLÉSI DÁTUM
     const firstDate = evLogs.length > 0 ? new Date(evLogs[evLogs.length - 1].date) : new Date();
     const elapsedDays = Math.max(1, Math.round((new Date().getTime() - firstDate.getTime()) / (1000 * 60 * 60 * 24)));
     
@@ -1025,23 +1066,29 @@ function App() {
                     </div>
                   )}
 
-                  {/* NAPELEM ÉS HAVI REFERENCIA FORM */}
+                  {/* NAPELEM ÉS HAVI REFERENCIA FORM - DÁTUM VÁLTÁSKOR AUTOMATIKUS BETÖLTÉSSEL */}
                   {!isReadOnly && (
                     <div className="ui-widget-card">
                       <h3 className="card-heading-clean">☀️ Napelem & Áram Referencia</h3>
                       <div className="form-stack-vertical">
                         <div>
-                          <label className="input-label-flat">Hónap</label>
-                          <input type="month" className="form-control-select" value={benchmarkForm.month} onChange={(e) => setBenchmarkForm({...benchmarkForm, month: e.target.value})} />
+                          <label className="input-label-flat">Hónap Kiválasztása</label>
+                          <input 
+                            type="month" 
+                            className="form-control-select" 
+                            value={benchmarkForm.month} 
+                            onChange={(e) => handleBenchmarkMonthChange(e.target.value)} 
+                          />
                         </div>
+                        
                         <div style={{ display: 'flex', gap: '8px' }}>
                           <div style={{ flex: 1 }}>
                             <label className="input-label-flat">Napelem Termelés (kWh)</label>
-                            <input type="number" className="form-control-select" placeholder="kWh" value={benchmarkForm.solar_kwh} onChange={(e) => setBenchmarkForm({...benchmarkForm, solar_kwh: e.target.value})} />
+                            <input type="number" step="0.1" className="form-control-select" placeholder="kWh" value={benchmarkForm.solar_kwh} onChange={(e) => setBenchmarkForm({...benchmarkForm, solar_kwh: e.target.value})} />
                           </div>
                           <div style={{ flex: 1 }}>
                             <label className="input-label-flat">Hálózati Áram (kWh)</label>
-                            <input type="number" className="form-control-select" placeholder="kWh" value={benchmarkForm.grid_kwh} onChange={(e) => setBenchmarkForm({...benchmarkForm, grid_kwh: e.target.value})} />
+                            <input type="number" step="0.1" className="form-control-select" placeholder="kWh" value={benchmarkForm.grid_kwh} onChange={(e) => setBenchmarkForm({...benchmarkForm, grid_kwh: e.target.value})} />
                           </div>
                         </div>
 
@@ -1060,7 +1107,8 @@ function App() {
                           <label className="input-label-flat">Napelem Beruházás (Ft)</label>
                           <input type="number" className="form-control-select" value={benchmarkForm.solar_investment} onChange={(e) => setBenchmarkForm({...benchmarkForm, solar_investment: e.target.value})} />
                         </div>
-                        <button className="btn-action-primary" onClick={handleBenchmarkSave}>Adatok mentése</button>
+
+                        <button className="btn-action-primary" onClick={handleBenchmarkSave}>Adatok mentése ehhez a hónaphoz</button>
                       </div>
                     </div>
                   )}
@@ -1098,7 +1146,7 @@ function App() {
                     </div>
                   </div>
 
-                  {/* PRECIZÍOS MEGTÉRÜLÉSI DÁTUM ÉS EXCEL ADATOK */}
+                  {/* PRECIZÍOS MEGTÉRÜLÉSI DÁTUM */}
                   <div className="ui-widget-card">
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
                       <h3 className="card-heading-clean" style={{ margin: 0 }}>📊 Várható Megtérülés: <span className="highlight-blue">{roiMetrics.estimatedPaybackDate}</span></h3>
@@ -1111,6 +1159,36 @@ function App() {
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '8px', fontSize: '0.8rem', color: '#64748b' }}>
                       <span>Eltelt napok: {roiMetrics.elapsedDays} nap</span>
                       <span>Hátralévő napok: {roiMetrics.remainingDays} nap</span>
+                    </div>
+                  </div>
+
+                  {/* HISTORIKUS NAPELEM ÉS HÁLÓZATI ÁRAM TÁBLÁZAT */}
+                  <div className="ui-widget-card scrollable-list" style={{ maxHeight: '250px' }}>
+                    <h3 className="card-heading-clean">☀️ Historikus Napelem & Áram Referenciák</h3>
+                    <div className="modern-data-table-stack">
+                      {benchmarks.map((bm: any) => (
+                        <div key={bm.id || bm.month} className="table-row-card" style={{ padding: '8px 12px' }}>
+                          <div>
+                            <div style={{ fontWeight: 700, fontSize: '0.9rem' }}>{bm.month}</div>
+                            <div style={{ fontSize: '0.75rem', color: '#64748b' }}>
+                              Benzin: {bm.gasoline_price} Ft/l • Ref: {bm.avg_consumption} l/100km
+                            </div>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                            <div style={{ textAlign: 'right' }}>
+                              <div style={{ fontWeight: 700, fontSize: '0.85rem' }} className="font-emerald">Termelés: {bm.solar_kwh || 0} kWh</div>
+                              <div style={{ fontSize: '0.75rem', color: '#64748b' }}>Hálózat: {bm.grid_kwh || 0} kWh</div>
+                            </div>
+                            {!isReadOnly && (
+                              <div className="row-buttons-trigger">
+                                <button onClick={() => handleEditBenchmark(bm)}>✏️</button>
+                                <button onClick={async () => { if(window.confirm(`Biztosan törlöd a ${bm.month} havi referenciát?`)) { await fetch(`${BACKEND_URL}/api/benchmarks/${bm.id}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${user.token}` } }); fetchAll(user.token); } }}>❌</button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                      {benchmarks.length === 0 && <div className="empty-state-text">Még nincs rögzített havi referencia.</div>}
                     </div>
                   </div>
 
