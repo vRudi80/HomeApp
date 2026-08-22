@@ -14,13 +14,20 @@ const PIE_COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6'];
 
 const ADMIN_EMAILS = ['kovari.rudolf@gmail.com'];
 
-// SÁVOS ÁRAMDÍJ KISZÁMÍTÓ SEGÉDFÜGGVÉNY (210 kWh-ig kedvezményes, felette piaci ár)
-function calculateTieredPowerCost(kwh: number, priceLow = 36, priceHigh = 70.1, limit = 210): number {
-  if (kwh <= 0) return 0;
-  if (kwh <= limit) {
-    return kwh * priceLow;
+// PONTOS EXCEL KÉPLET ALAPJÁN SZÁMOLÓ SEGÉDFÜGGVÉNY:
+// =if(N5<210; (N5-O5)*P5*-1; ((210*P5)+((N5-O5)-210)*Q5)*-1)
+function calculateExcelSolarSavings(totalCons: number, gridKwh: number, priceLow = 36, priceHigh = 70.1): number {
+  const savedKwh = Math.max(0, totalCons - gridKwh);
+  if (savedKwh <= 0) return 0;
+
+  if (totalCons < 210) {
+    return savedKwh * priceLow;
+  } else {
+    if (savedKwh <= 210) {
+      return savedKwh * priceLow;
+    }
+    return (210 * priceLow) + ((savedKwh - 210) * priceHigh);
   }
-  return (limit * priceLow) + ((kwh - limit) * priceHigh);
 }
 
 function App() {
@@ -549,7 +556,7 @@ function App() {
     return Array.from(set);
   }, [evLogs]);
 
-  // --- 5. SZEKCIÓ: EXCEL-ALAPÚ SÁVOS ÁRAM MEGTÉRÜLÉSI MOTOR ---
+  // --- 5. SZEKCIÓ: EXCEL PONTOS DÍJSZÁMÍTÓ MEGTÉRÜLÉSI MOTOR ---
   const roiMetrics = useMemo(() => {
     let totalKwh = 0;
     let totalPaidHuf = 0;
@@ -584,7 +591,7 @@ function App() {
       market_kwh_price: 70.1
     };
 
-    // 1. AUTÓ MEGTARÍTÁS (BENZIN EGYENÉRTÉK - KIFIZETETT TÖLTÉS)
+    // 1. AUTÓ MEGTARÍTÁS
     let totalGasolineEquivalentHuf = 0;
     evLogs.forEach(log => {
       const logMonth = String(log.date).substring(0, 7);
@@ -599,7 +606,7 @@ function App() {
 
     const evSavingsHuf = totalGasolineEquivalentHuf - totalPaidHuf;
 
-    // 2. NAPELEM ÁRAM MEGTARÍTÁS (SÁVOS KISZÁMÍTÁS: 210 kWh-ig 36 Ft, FELETTE 70.1 Ft)
+    // 2. NAPELEM ÁRAM MEGTARÍTÁS (PONTOS EXCEL KÉPLET ALAPJÁN!)
     let solarHouseholdSavingsHuf = 0;
     benchmarks.forEach(bm => {
       const totalCons = parseFloat(bm.total_consumed_kwh || 0);
@@ -608,14 +615,7 @@ function App() {
       const highPrice = parseFloat(bm.market_kwh_price || 70.1);
 
       if (totalCons > 0) {
-        // Napelem nélküli elméleti villanyszámla (Sávos)
-        const theoreticalBill = calculateTieredPowerCost(totalCons, lowPrice, highPrice, 210);
-        
-        // Napelemmel ténylegesen kifizetett villanyszámla (Sávos)
-        const actualBill = calculateTieredPowerCost(gridKwh, lowPrice, highPrice, 210);
-
-        // A kettő különbsége a napelemmel megspórolt forint
-        solarHouseholdSavingsHuf += Math.max(0, theoreticalBill - actualBill);
+        solarHouseholdSavingsHuf += calculateExcelSolarSavings(totalCons, gridKwh, lowPrice, highPrice);
       }
     });
 
