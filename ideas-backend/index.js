@@ -148,9 +148,7 @@ app.put('/api/assets/:id', verifyUser, async (req, res) => {
             [friendlyName, category, city || '', street || '', plateNumber || '', area === '' ? null : area, req.params.id, req.userId]
         );
         res.json({ success: true });
-    } catch (err) {
-        res.status(500).json({ error: 'Hiba a módosításnál' });
-    }
+    } catch (err) { res.status(500).json({ error: 'Hiba a módosításnál' }); }
 });
 
 app.delete('/api/assets/:id', verifyUser, async (req, res) => {
@@ -172,9 +170,7 @@ app.get('/api/asset-categories', verifyUser, async (req, res) => {
              WHERE a.UserId = ?`, [targetUserId]
         );
         res.json(rows);
-    } catch (err) {
-        res.status(500).json({ error: 'DB hiba' });
-    }
+    } catch (err) { res.status(500).json({ error: 'DB hiba' }); }
 });
 
 app.post('/api/asset-categories/toggle', verifyUser, async (req, res) => {
@@ -196,9 +192,7 @@ app.post('/api/asset-categories/toggle', verifyUser, async (req, res) => {
             await pool.query('INSERT INTO asset_allowed_categories (asset_id, category_name) VALUES (?, ?)', [assetId, categoryName]);
             res.json({ success: true, action: 'added' });
         }
-    } catch (err) {
-        res.status(500).json({ error: 'DB hiba' });
-    }
+    } catch (err) { res.status(500).json({ error: 'DB hiba' }); }
 });
 
 // --- MEGOSZTÁSOK ---
@@ -297,7 +291,7 @@ app.delete('/api/invoices/:id', verifyUser, async (req, res) => {
     res.status(204).end();
 });
 
-// --- EV TÖLTÉSI NAPLÓ (GET, POST, PUT, DELETE) ---
+// --- EV TÖLTÉSI NAPLÓ ---
 app.get('/api/ev-logs', verifyUser, async (req, res) => {
     const targetUserId = req.query.userId || req.userId;
     if (!(await canAccessData(req.userId, req.userEmail, targetUserId))) return res.status(403).json({ error: "Nincs jogosultság" });
@@ -348,33 +342,34 @@ app.get('/api/benchmarks', verifyUser, async (req, res) => {
         res.json(rows);
     } catch (err) { res.status(500).json({ error: 'DB hiba' }); }
 });
-// --- HAVI REFERENCIÁK TÖRLÉSE ---
-app.delete('/api/benchmarks/:id', verifyUser, async (req, res) => {
-    try {
-        await pool.query('DELETE FROM monthly_benchmarks WHERE id = ? AND user_id = ?', [req.params.id, req.userId]);
-        res.status(204).end();
-    } catch (err) { res.status(500).json({ error: 'Hiba a törlésnél' }); }
-});
 
 app.post('/api/benchmarks', verifyUser, async (req, res) => {
-    const { month, gasoline_price, avg_consumption, solar_kwh, grid_kwh, grid_kwh_price, market_kwh_price, solar_investment, ev_investment } = req.body;
+    const { month, gasoline_price, avg_consumption, solar_kwh, total_consumed_kwh, grid_kwh, grid_kwh_price, market_kwh_price, solar_investment, ev_investment } = req.body;
     try {
         await pool.query(
-            `INSERT INTO monthly_benchmarks (user_id, month, gasoline_price, avg_consumption, solar_kwh, grid_kwh, grid_kwh_price, market_kwh_price, solar_investment, ev_investment)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `INSERT INTO monthly_benchmarks (user_id, month, gasoline_price, avg_consumption, solar_kwh, total_consumed_kwh, grid_kwh, grid_kwh_price, market_kwh_price, solar_investment, ev_investment)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON DUPLICATE KEY UPDATE 
                 gasoline_price = VALUES(gasoline_price),
                 avg_consumption = VALUES(avg_consumption),
                 solar_kwh = VALUES(solar_kwh),
+                total_consumed_kwh = VALUES(total_consumed_kwh),
                 grid_kwh = VALUES(grid_kwh),
                 grid_kwh_price = VALUES(grid_kwh_price),
                 market_kwh_price = VALUES(market_kwh_price),
                 solar_investment = VALUES(solar_investment),
                 ev_investment = VALUES(ev_investment)`,
-            [req.userId, month, gasoline_price, avg_consumption, solar_kwh || 0, grid_kwh || 0, grid_kwh_price || 36, market_kwh_price || 70.1, solar_investment || 1950400, ev_investment || 0]
+            [req.userId, month, gasoline_price, avg_consumption, solar_kwh || 0, total_consumed_kwh || 0, grid_kwh || 0, grid_kwh_price || 36, market_kwh_price || 70.1, solar_investment || 1950400, ev_investment || 0]
         );
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: 'Hiba a referenciák mentésekor' }); }
+});
+
+app.delete('/api/benchmarks/:id', verifyUser, async (req, res) => {
+    try {
+        await pool.query('DELETE FROM monthly_benchmarks WHERE id = ? AND user_id = ?', [req.params.id, req.userId]);
+        res.status(204).end();
+    } catch (err) { res.status(500).json({ error: 'Hiba a törlésnél' }); }
 });
 
 const PORT = process.env.PORT || 4000;
