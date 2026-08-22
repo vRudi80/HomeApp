@@ -348,6 +348,13 @@ app.get('/api/benchmarks', verifyUser, async (req, res) => {
         res.json(rows);
     } catch (err) { res.status(500).json({ error: 'DB hiba' }); }
 });
+// --- HAVI REFERENCIÁK TÖRLÉSE ---
+app.delete('/api/benchmarks/:id', verifyUser, async (req, res) => {
+    try {
+        await pool.query('DELETE FROM monthly_benchmarks WHERE id = ? AND user_id = ?', [req.params.id, req.userId]);
+        res.status(204).end();
+    } catch (err) { res.status(500).json({ error: 'Hiba a törlésnél' }); }
+});
 
 app.post('/api/benchmarks', verifyUser, async (req, res) => {
     const { month, gasoline_price, avg_consumption, solar_kwh, grid_kwh, grid_kwh_price, market_kwh_price, solar_investment, ev_investment } = req.body;
