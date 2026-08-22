@@ -85,6 +85,7 @@ function App() {
     gasoline_price: '595',
     avg_consumption: '5.95',
     solar_kwh: '0',
+    total_consumed_kwh: '0',
     grid_kwh: '0',
     grid_kwh_price: '36',
     market_kwh_price: '70.1',
@@ -242,7 +243,6 @@ function App() {
     } catch (err) { console.error(err); }
   }
 
-  // AUDO-LOAD RELEVANT MONTHLY BENCHMARK ON MONTH CHANGE
   function handleBenchmarkMonthChange(newMonth: string) {
     const existing = benchmarks.find(b => b.month === newMonth);
     if (existing) {
@@ -251,6 +251,7 @@ function App() {
         gasoline_price: String(existing.gasoline_price ?? '595'),
         avg_consumption: String(existing.avg_consumption ?? '5.95'),
         solar_kwh: String(existing.solar_kwh ?? '0'),
+        total_consumed_kwh: String(existing.total_consumed_kwh ?? '0'),
         grid_kwh: String(existing.grid_kwh ?? '0'),
         grid_kwh_price: String(existing.grid_kwh_price ?? '36'),
         market_kwh_price: String(existing.market_kwh_price ?? '70.1'),
@@ -262,6 +263,7 @@ function App() {
         ...prev,
         month: newMonth,
         solar_kwh: '0',
+        total_consumed_kwh: '0',
         grid_kwh: '0'
       }));
     }
@@ -273,6 +275,7 @@ function App() {
       gasoline_price: String(bm.gasoline_price ?? '595'),
       avg_consumption: String(bm.avg_consumption ?? '5.95'),
       solar_kwh: String(bm.solar_kwh ?? '0'),
+      total_consumed_kwh: String(bm.total_consumed_kwh ?? '0'),
       grid_kwh: String(bm.grid_kwh ?? '0'),
       grid_kwh_price: String(bm.grid_kwh_price ?? '36'),
       market_kwh_price: String(bm.market_kwh_price ?? '70.1'),
@@ -371,6 +374,7 @@ function App() {
         gasoline_price: parseFloat(benchmarkForm.gasoline_price),
         avg_consumption: parseFloat(benchmarkForm.avg_consumption),
         solar_kwh: parseFloat(benchmarkForm.solar_kwh || '0'),
+        total_consumed_kwh: parseFloat(benchmarkForm.total_consumed_kwh || '0'),
         grid_kwh: parseFloat(benchmarkForm.grid_kwh || '0'),
         grid_kwh_price: parseFloat(benchmarkForm.grid_kwh_price || '36'),
         market_kwh_price: parseFloat(benchmarkForm.market_kwh_price || '70.1'),
@@ -536,7 +540,7 @@ function App() {
     return Array.from(set);
   }, [evLogs]);
 
-  // --- 5. SZEKCIÓ: EXCEL-ALAPÚ TELJES MEGTÉRÜLÉSI MOTOR ---
+  // --- 5. SZEKCIÓ: EXCEL-ALAPÚ PONTOS SAJÁT FOGYASZTÁSÚ MEGTÉRÜLÉSI MOTOR ---
   const roiMetrics = useMemo(() => {
     let totalKwh = 0;
     let totalPaidHuf = 0;
@@ -586,12 +590,17 @@ function App() {
 
     const evSavingsHuf = totalGasolineEquivalentHuf - totalPaidHuf;
 
-    // 2. NAPELEM HÁZTARTÁSI ÁRAM MEGTARÍTÁS
+    // 2. NAPELEM HÁZTARTÁSI ÁRAM MEGTARÍTÁS: (Összes Fogyasztás - Hálózati Áram = Megspórolt Saját Napelem Áram)
     let solarHouseholdSavingsHuf = 0;
     benchmarks.forEach(bm => {
-      const sKwh = parseFloat(bm.solar_kwh || 0);
+      const totalCons = parseFloat(bm.total_consumed_kwh || 0);
+      const gridKwh = parseFloat(bm.grid_kwh || 0);
       const gridPrice = parseFloat(bm.grid_kwh_price || 36);
-      solarHouseholdSavingsHuf += sKwh * gridPrice;
+
+      // Ha meg van adva az összes fogyasztás, abból vonjuk ki a hálózatit
+      const selfConsumedSolarKwh = Math.max(0, totalCons - gridKwh);
+      
+      solarHouseholdSavingsHuf += selfConsumedSolarKwh * gridPrice;
     });
 
     // 3. ÖSSZES MEGTARÍTÁS
@@ -1066,7 +1075,7 @@ function App() {
                     </div>
                   )}
 
-                  {/* NAPELEM ÉS HAVI REFERENCIA FORM - DÁTUM VÁLTÁSKOR AUTOMATIKUS BETÖLTÉSSEL */}
+                  {/* NAPELEM ÉS HAVI REFERENCIA FORM (ÁRAMFOGYASZTÁS MEZŐVEL!) */}
                   {!isReadOnly && (
                     <div className="ui-widget-card">
                       <h3 className="card-heading-clean">☀️ Napelem & Áram Referencia</h3>
@@ -1080,6 +1089,11 @@ function App() {
                             onChange={(e) => handleBenchmarkMonthChange(e.target.value)} 
                           />
                         </div>
+
+                        <div>
+                          <label className="input-label-flat">Összes Háztartási Fogyasztás (kWh)</label>
+                          <input type="number" step="0.1" className="form-control-select" placeholder="pl. 325 kWh" value={benchmarkForm.total_consumed_kwh} onChange={(e) => setBenchmarkForm({...benchmarkForm, total_consumed_kwh: e.target.value})} />
+                        </div>
                         
                         <div style={{ display: 'flex', gap: '8px' }}>
                           <div style={{ flex: 1 }}>
@@ -1087,7 +1101,7 @@ function App() {
                             <input type="number" step="0.1" className="form-control-select" placeholder="kWh" value={benchmarkForm.solar_kwh} onChange={(e) => setBenchmarkForm({...benchmarkForm, solar_kwh: e.target.value})} />
                           </div>
                           <div style={{ flex: 1 }}>
-                            <label className="input-label-flat">Hálózati Áram (kWh)</label>
+                            <label className="input-label-flat">Hálózati Vételezés (kWh)</label>
                             <input type="number" step="0.1" className="form-control-select" placeholder="kWh" value={benchmarkForm.grid_kwh} onChange={(e) => setBenchmarkForm({...benchmarkForm, grid_kwh: e.target.value})} />
                           </div>
                         </div>
@@ -1166,28 +1180,34 @@ function App() {
                   <div className="ui-widget-card scrollable-list" style={{ maxHeight: '250px' }}>
                     <h3 className="card-heading-clean">☀️ Historikus Napelem & Áram Referenciák</h3>
                     <div className="modern-data-table-stack">
-                      {benchmarks.map((bm: any) => (
-                        <div key={bm.id || bm.month} className="table-row-card" style={{ padding: '8px 12px' }}>
-                          <div>
-                            <div style={{ fontWeight: 700, fontSize: '0.9rem' }}>{bm.month}</div>
-                            <div style={{ fontSize: '0.75rem', color: '#64748b' }}>
-                              Benzin: {bm.gasoline_price} Ft/l • Ref: {bm.avg_consumption} l/100km
-                            </div>
-                          </div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                            <div style={{ textAlign: 'right' }}>
-                              <div style={{ fontWeight: 700, fontSize: '0.85rem' }} className="font-emerald">Termelés: {bm.solar_kwh || 0} kWh</div>
-                              <div style={{ fontSize: '0.75rem', color: '#64748b' }}>Hálózat: {bm.grid_kwh || 0} kWh</div>
-                            </div>
-                            {!isReadOnly && (
-                              <div className="row-buttons-trigger">
-                                <button onClick={() => handleEditBenchmark(bm)}>✏️</button>
-                                <button onClick={async () => { if(window.confirm(`Biztosan törlöd a ${bm.month} havi referenciát?`)) { await fetch(`${BACKEND_URL}/api/benchmarks/${bm.id}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${user.token}` } }); fetchAll(user.token); } }}>❌</button>
+                      {benchmarks.map((bm: any) => {
+                        const totalCons = parseFloat(bm.total_consumed_kwh || 0);
+                        const gridKwh = parseFloat(bm.grid_kwh || 0);
+                        const savedKwh = Math.max(0, totalCons - gridKwh);
+
+                        return (
+                          <div key={bm.id || bm.month} className="table-row-card" style={{ padding: '8px 12px' }}>
+                            <div>
+                              <div style={{ fontWeight: 700, fontSize: '0.9rem' }}>{bm.month}</div>
+                              <div style={{ fontSize: '0.75rem', color: '#64748b' }}>
+                                Benzin: {bm.gasoline_price} Ft/l • Fogyasztás: {totalCons} kWh (Hálózat: {gridKwh} kWh)
                               </div>
-                            )}
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                              <div style={{ textAlign: 'right' }}>
+                                <div style={{ fontWeight: 700, fontSize: '0.85rem' }} className="font-emerald">Megspórolt: {savedKwh.toFixed(1)} kWh</div>
+                                <div style={{ fontSize: '0.75rem', color: '#64748b' }}>Termelt: {bm.solar_kwh || 0} kWh</div>
+                              </div>
+                              {!isReadOnly && (
+                                <div className="row-buttons-trigger">
+                                  <button onClick={() => handleEditBenchmark(bm)}>✏️</button>
+                                  <button onClick={async () => { if(window.confirm(`Biztosan törlöd a ${bm.month} havi referenciát?`)) { await fetch(`${BACKEND_URL}/api/benchmarks/${bm.id}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${user.token}` } }); fetchAll(user.token); } }}>❌</button>
+                                </div>
+                              )}
+                            </div>
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                       {benchmarks.length === 0 && <div className="empty-state-text">Még nincs rögzített havi referencia.</div>}
                     </div>
                   </div>
