@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { 
   BarChart, Bar, XAxis, YAxis, 
   CartesianGrid, Tooltip, ResponsiveContainer, Legend,
-  PieChart, Pie, Cell, LineChart, Line, ComposedChart
+  PieChart, Pie, Cell, Line, ComposedChart
 } from 'recharts';
 import { GoogleOAuthProvider, GoogleLogin, googleLogout } from '@react-oauth/google';
 import { jwtDecode } from "jwt-decode";
@@ -14,19 +14,23 @@ const PIE_COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6'];
 
 const ADMIN_EMAILS = ['kovari.rudolf@gmail.com'];
 
+// SÁVOS ÁRAMDÍJ KISZÁMÍTÓ SEGÉDFÜGGVÉNY (210 kWh limit)
 function calculateTieredPowerCost(kwh: number, priceLow = 36, priceHigh = 70.1, limit = 210): number {
-  if (kwh <= 0) return 0;
-  if (kwh <= limit) {
-    return kwh * priceLow;
+  const safeKwh = isNaN(kwh) || kwh < 0 ? 0 : kwh;
+  if (safeKwh <= limit) {
+    return safeKwh * priceLow;
   }
-  return (limit * priceLow) + ((kwh - limit) * priceHigh);
+  return (limit * priceLow) + ((safeKwh - limit) * priceHigh);
 }
 
+// PONTOS EXCEL KÉPLET ALAPJÁN SZÁMOLÓ SEGÉDFÜGGVÉNY:
 function calculateExcelSolarSavings(totalCons: number, gridKwh: number, priceLow = 36, priceHigh = 70.1): number {
-  const savedKwh = Math.max(0, totalCons - gridKwh);
+  const safeTotal = isNaN(totalCons) ? 0 : totalCons;
+  const safeGrid = isNaN(gridKwh) ? 0 : gridKwh;
+  const savedKwh = Math.max(0, safeTotal - safeGrid);
   if (savedKwh <= 0) return 0;
 
-  if (totalCons < 210) {
+  if (safeTotal < 210) {
     return savedKwh * priceLow;
   } else {
     if (savedKwh <= 210) {
@@ -37,6 +41,7 @@ function calculateExcelSolarSavings(totalCons: number, gridKwh: number, priceLow
 }
 
 function App() {
+  // --- 1. SZEKCIÓ: ÁLLAPOTOK DEKLARÁCIÓJA ---
   const [user, setUser] = useState<any>(null);
   const [records, setRecords] = useState<any[]>([]);
   const [invoices, setInvoices] = useState<any[]>([]);
@@ -47,7 +52,6 @@ function App() {
   const [viewingUserId, setViewingUserId] = useState<string | null>(null);
   const [selectedAssetId, setSelectedAssetId] = useState<string>('all');
   
-  // NAVIGÁCIÓS FÜLEK
   const [activeTab, setActiveTab] = useState<'dashboard' | 'transactions' | 'settings' | 'ev-solar' | 'rental'>('dashboard');
   
   const [txSearch, setTxSearch] = useState('');
@@ -85,6 +89,7 @@ function App() {
 
   const [assetCategoryMap, setAssetCategoryMap] = useState<{ [key: string]: string[] }>({});
 
+  // EV ÉS NAPELEM STATE-EK
   const [evLogs, setEvLogs] = useState<any[]>([]);
   const [benchmarks, setBenchmarks] = useState<any[]>([]);
   const [editingEvLogId, setEditingEvLogId] = useState<number | null>(null);
@@ -136,6 +141,7 @@ function App() {
   const isReadOnly = viewingUserId !== null && viewingUserId !== user?.sub;
   const isAdmin = user && ADMIN_EMAILS.includes(user.email);
 
+  // --- 2. SZEKCIÓ: ALAPFÜGGVÉNYEK ---
   function forceLogout() {
     googleLogout();
     setUser(null);
@@ -266,14 +272,16 @@ function App() {
       setInvoices(invRes.ok ? await invRes.json() : []);
       
       const loadedAssets = assetRes.ok ? await assetRes.json() : [];
-      setAssets(loadedAssets);
-      if (loadedAssets.length > 0 && !selectedRentalAssetId) {
+      setAssets(Array.isArray(loadedAssets) ? loadedAssets : []);
+      if (Array.isArray(loadedAssets) && loadedAssets.length > 0 && !selectedRentalAssetId) {
         setSelectedRentalAssetId(String(loadedAssets[0].Id));
       }
 
       setCategories(catRes.ok ? await catRes.json() : []);
       setEvLogs(evRes.ok ? await evRes.json() : []);
-      setBenchmarks(bmRes.ok ? await bmRes.json() : []);
+      
+      const fetchedBm = bmRes.ok ? await bmRes.json() : [];
+      setBenchmarks(Array.isArray(fetchedBm) ? fetchedBm : []);
       setRentalContracts(rentConRes.ok ? await rentConRes.json() : []);
 
       const acData = acRes.ok ? await acRes.json() : [];
@@ -289,7 +297,6 @@ function App() {
     } catch (err) { console.error(err); }
   }
 
-  // ALBÉRLET BEFIZETÉSEK LEKÉRÉSE ESZKÖZ VÁLTÁSKOR
   useEffect(() => {
     if (selectedRentalAssetId && user?.token) {
       fetch(`${BACKEND_URL}/api/rentals/payments?assetId=${selectedRentalAssetId}`, {
@@ -343,7 +350,7 @@ function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
-  // --- ALBÉRLETI METÓDUSOK ---
+  // --- 3. SZEKCIÓ: ADATMÓDOSÍTÓ METÓDUSOK ---
   async function handleSaveRentalContract() {
     if (!selectedRentalAssetId) return alert("Válassz ingatlant!");
     const res = await fetch(`${BACKEND_URL}/api/rentals/contracts`, {
@@ -374,11 +381,11 @@ function App() {
       })
     });
     if (res.ok) {
-      // Re-fetch payments
       const pRes = await fetch(`${BACKEND_URL}/api/rentals/payments?assetId=${selectedRentalAssetId}`, {
         headers: { 'Authorization': `Bearer ${user.token}` }
       });
-      setRentalPayments(await pRes.json());
+      const data = await pRes.json();
+      setRentalPayments(Array.isArray(data) ? data : []);
     }
   }
 
@@ -548,31 +555,453 @@ function App() {
     if (res.ok) fetchMyShares(user.token);
   }
 
-  // --- ALBÉRLET ELSZÁMOLÁSI CALCULATOR ---
+  // --- 4. SZEKCIÓ: AUTOMATIKUS EFFEKTEK ---
+  useEffect(() => {
+    const savedToken = localStorage.getItem('userToken');
+    if (savedToken) handleLoginSuccess(savedToken);
+  }, []);
+
+  useEffect(() => {
+    if (assets.length > 0 && !matrixSelectedAssetId) {
+      setMatrixSelectedAssetId(String(assets[0].Id));
+    }
+  }, [assets]);
+
+  useEffect(() => {
+    const allowed = getAllowedTypes(targetAssetId);
+    if (allowed.length > 0) {
+      if (!type || !allowed.includes(type)) {
+        setType(allowed[0]);
+      }
+    } else {
+      setType('');
+    }
+  }, [targetAssetId, assets, categories, assetCategoryMap]);
+
+  useEffect(() => {
+    const asset = assets.find(a => String(a.Id) === String(targetAssetId));
+    const currentCat = categories.find(c => c.Name === type);
+    if (asset?.Category === 'car' || currentCat?.Type === 'invoice_only' || currentCat?.Type === 'income') {
+      setRecordMode('invoice');
+    }
+  }, [targetAssetId, type, assets, categories]);
+
+  const isMeterDisabled = useMemo(() => {
+    const asset = assets.find(a => String(a.Id) === String(targetAssetId));
+    const currentCat = categories.find(c => c.Name === type);
+    return asset?.Category === 'car' || currentCat?.Type === 'invoice_only' || currentCat?.Type === 'income';
+  }, [targetAssetId, type, assets, categories]);
+
+  const visibleCategories = useMemo(() => {
+    const allowedNames = getAllowedTypes(selectedAssetId);
+    return categories.filter(c => allowedNames.includes(c.Name));
+  }, [categories, selectedAssetId, assetCategoryMap]);
+
+  const combinedList = useMemo(() => {
+    const safeRecords = Array.isArray(records) ? records : [];
+    const safeInvoices = Array.isArray(invoices) ? invoices : [];
+
+    const formattedRecords = safeRecords.map(r => ({
+      ...r,
+      lType: 'meter',
+      d: r.FormattedDate || r.Date
+    }));
+
+    const formattedInvoices = safeInvoices.map(i => ({
+      ...i,
+      lType: 'invoice',
+      Value: i.Amount,
+      d: i.Month
+    }));
+
+    return [...formattedRecords, ...formattedInvoices].sort(
+      (a, b) => new Date(b.d).getTime() - new Date(a.d).getTime()
+    );
+  }, [records, invoices]);
+
+  const filteredCombinedList = useMemo(() => {
+    return combinedList.filter((item: any) => {
+      const asset = assets.find(a => String(a.Id) === String(item.AssetId));
+      const assetName = asset ? asset.FriendlyName.toLowerCase() : '';
+      const itemType = item.Type ? item.Type.toLowerCase() : '';
+      
+      const searchMatch = 
+        itemType.includes(txSearch.toLowerCase()) || 
+        assetName.includes(txSearch.toLowerCase()) || 
+        String(item.Value).includes(txSearch);
+        
+      const assetMatch = txAssetFilter === 'all' || String(item.AssetId) === txAssetFilter;
+      const categoryMatch = txCategoryFilter === 'all' || item.Type === txCategoryFilter;
+      
+      return searchMatch && assetMatch && categoryMatch;
+    });
+  }, [combinedList, txSearch, txAssetFilter, txCategoryFilter, assets]);
+
+  const uniqueLocations = useMemo(() => {
+    const set = new Set<string>(['Napelem', 'Otthon', 'Tesla Supercharger', 'Ionity', 'Tea', 'Garázs Tondo']);
+    const safeEv = Array.isArray(evLogs) ? evLogs : [];
+    safeEv.forEach(log => { if (log && log.location) set.add(log.location); });
+    return Array.from(set);
+  }, [evLogs]);
+
+  const solarEnergyBalanceData = useMemo(() => {
+    const safeBm = Array.isArray(benchmarks) ? benchmarks : [];
+    return safeBm.slice().sort((a, b) => String(a.month || '').localeCompare(String(b.month || ''))).map(bm => {
+      const totalCons = parseFloat(bm.total_consumed_kwh || 0) || 0;
+      const gridKwh = parseFloat(bm.grid_kwh || 0) || 0;
+      const solarKwh = parseFloat(bm.solar_kwh || 0) || 0;
+      const selfConsumedSolar = Math.max(0, totalCons - gridKwh);
+
+      return {
+        month: bm.month || '',
+        solar: solarKwh,
+        consumed: totalCons,
+        grid: gridKwh,
+        selfConsumed: selfConsumedSolar
+      };
+    });
+  }, [benchmarks]);
+
+  const evEfficiencyData = useMemo(() => {
+    const safeEv = Array.isArray(evLogs) ? evLogs : [];
+    const map: { [month: string]: { kwh: number; km: number; cost: number } } = {};
+    safeEv.forEach(log => {
+      if (!log || !log.date) return;
+      const m = String(log.date).substring(0, 7);
+      if (!map[m]) map[m] = { kwh: 0, km: 0, cost: 0 };
+      map[m].kwh += parseFloat(log.kwh_amount || 0) || 0;
+      map[m].km += parseInt(log.driven_km || 0) || 0;
+      map[m].cost += parseFloat(log.cost_huf || 0) || 0;
+    });
+
+    return Object.keys(map).sort().map(m => {
+      const d = map[m];
+      const avgKwh100Km = d.km > 0 ? (d.kwh / d.km) * 100 : 0;
+      const avgFtKm = d.km > 0 ? d.cost / d.km : 0;
+      return {
+        month: m,
+        kwh100km: parseFloat(avgKwh100Km.toFixed(1)) || 0,
+        ftKm: parseFloat(avgFtKm.toFixed(1)) || 0,
+        totalKm: d.km
+      };
+    }).filter(d => d.totalKm > 0 || d.kwh100km > 0);
+  }, [evLogs]);
+
+  // HIBATŰRŐ EXCEL MEGTÉRÜLÉSI MOTOR (NINCS MEGSZAKADÓ RANGE ERROR)
+  const roiMetrics = useMemo(() => {
+    let totalKwh = 0;
+    let totalPaidHuf = 0;
+    let totalKm = 0;
+    let solarKwh = 0;
+
+    const locationBreakdown: { [loc: string]: number } = {};
+    const safeEv = Array.isArray(evLogs) ? evLogs : [];
+    const safeBm = Array.isArray(benchmarks) ? benchmarks : [];
+
+    safeEv.forEach(log => {
+      if (!log) return;
+      const kwh = parseFloat(log.kwh_amount || 0) || 0;
+      const huf = parseFloat(log.cost_huf || 0) || 0;
+      const km = parseInt(log.driven_km || 0) || 0;
+
+      totalKwh += kwh;
+      totalPaidHuf += huf;
+      totalKm += km;
+
+      if (log.charge_source === 'Napelem') {
+        solarKwh += kwh;
+      }
+
+      const loc = log.location || 'Egyéb';
+      locationBreakdown[loc] = (locationBreakdown[loc] || 0) + kwh;
+    });
+
+    const latestBm = safeBm[0] || {
+      gasoline_price: 595,
+      avg_consumption: 5.95,
+      solar_investment: 1950400,
+      ev_investment: 0,
+      grid_kwh_price: 36,
+      market_kwh_price: 70.1
+    };
+
+    let totalGasolineEquivalentHuf = 0;
+    safeEv.forEach(log => {
+      if (!log) return;
+      const logMonth = String(log.date || '').substring(0, 7);
+      const bm = safeBm.find(b => b.month === logMonth) || latestBm;
+      const km = parseInt(log.driven_km || 0) || 0;
+      
+      if (km > 0) {
+        const gasCostPerKm = (parseFloat(bm.avg_consumption || 5.95) / 100) * parseFloat(bm.gasoline_price || 595);
+        totalGasolineEquivalentHuf += km * gasCostPerKm;
+      }
+    });
+
+    const evSavingsHuf = totalGasolineEquivalentHuf - totalPaidHuf;
+
+    let solarHouseholdSavingsHuf = 0;
+    safeBm.forEach(bm => {
+      if (!bm) return;
+      const totalCons = parseFloat(bm.total_consumed_kwh || 0) || 0;
+      const gridKwh = parseFloat(bm.grid_kwh || 0) || 0;
+      const lowPrice = parseFloat(bm.grid_kwh_price || 36) || 36;
+      const highPrice = parseFloat(bm.market_kwh_price || 70.1) || 70.1;
+
+      if (totalCons > 0) {
+        solarHouseholdSavingsHuf += calculateExcelSolarSavings(totalCons, gridKwh, lowPrice, highPrice);
+      }
+    });
+
+    const totalSavingsHuf = evSavingsHuf + solarHouseholdSavingsHuf;
+    const totalInvestment = parseFloat(latestBm.solar_investment || 1950400) + parseFloat(latestBm.ev_investment || 0);
+    const currentBalance = totalSavingsHuf - totalInvestment;
+
+    // BIZTONSÁGOS DÁTUMSZÁMÍTÁS (HIBATŰRŐ)
+    let elapsedDays = 1;
+    if (safeEv.length > 0 && safeEv[safeEv.length - 1]?.date) {
+      const parsedDate = new Date(safeEv[safeEv.length - 1].date);
+      if (!isNaN(parsedDate.getTime())) {
+        elapsedDays = Math.max(1, Math.round((new Date().getTime() - parsedDate.getTime()) / (1000 * 60 * 60 * 24)));
+      }
+    }
+
+    const dailySavingsHuf = elapsedDays > 0 ? totalSavingsHuf / elapsedDays : 0;
+    const remainingHuf = Math.max(0, totalInvestment - totalSavingsHuf);
+    const remainingDays = dailySavingsHuf > 0 && isFinite(dailySavingsHuf) ? Math.round(remainingHuf / dailySavingsHuf) : 0;
+
+    let estimatedPaybackDateStr = 'N/A';
+    try {
+      const d = new Date();
+      if (remainingDays > 0 && isFinite(remainingDays)) {
+        d.setDate(d.getDate() + remainingDays);
+      }
+      if (!isNaN(d.getTime())) {
+        estimatedPaybackDateStr = d.toISOString().substring(0, 10);
+      }
+    } catch (e) {
+      estimatedPaybackDateStr = 'N/A';
+    }
+
+    const greenRatio = totalKwh > 0 ? (solarKwh / totalKwh) * 100 : 0;
+    const costPerKm = totalKm > 0 ? totalPaidHuf / totalKm : 0;
+
+    const locationPieData = Object.keys(locationBreakdown).map(loc => ({
+      name: loc,
+      value: Math.round(locationBreakdown[loc])
+    }));
+
+    return {
+      totalKwh,
+      totalPaidHuf,
+      totalKm,
+      solarKwh,
+      greenRatio,
+      costPerKm,
+      evSavingsHuf,
+      solarHouseholdSavingsHuf,
+      totalSavingsHuf,
+      totalInvestment,
+      currentBalance,
+      elapsedDays,
+      dailySavingsHuf,
+      remainingDays,
+      estimatedPaybackDate: estimatedPaybackDateStr,
+      locationPieData
+    };
+  }, [evLogs, benchmarks]);
+
+  const chartData = useMemo(() => {
+    const dataMap: { [key: string]: any } = {};
+    const safeRecords = Array.isArray(records) ? records : [];
+    const safeInvoices = Array.isArray(invoices) ? invoices : [];
+
+    const fRec = safeRecords.filter((r: any) => selectedAssetId === 'all' || String(r.AssetId) === String(selectedAssetId));
+    const fInv = safeInvoices.filter((i: any) => selectedAssetId === 'all' || String(i.AssetId) === String(selectedAssetId));
+
+    const isAll = filter.includes('Összes');
+    const isAllExpense = filter.includes('Összes kiadás');
+
+    if (displayMode === 'usage') {
+      const assetTypeGroupMap: { [key: string]: { [catType: string]: any[] } } = {};
+      
+      fRec.filter((r: any) => (isAll || isAllExpense ? true : filter.includes(r.Type))).forEach((r: any) => {
+        if (!assetTypeGroupMap[r.AssetId]) assetTypeGroupMap[r.AssetId] = {};
+        if (!assetTypeGroupMap[r.AssetId][r.Type]) assetTypeGroupMap[r.AssetId][r.Type] = [];
+        assetTypeGroupMap[r.AssetId][r.Type].push(r);
+      });
+
+      Object.keys(assetTypeGroupMap).forEach(assetId => {
+        Object.keys(assetTypeGroupMap[assetId]).forEach(catType => {
+          const sortedRecords = assetTypeGroupMap[assetId][catType].sort((a: any, b: any) => new Date(a.FormattedDate).getTime() - new Date(b.FormattedDate).getTime());
+          
+          const firstReadingPerMonth: { [key: string]: number } = {};
+          sortedRecords.forEach((r: any) => {
+            const monthKey = String(r.FormattedDate || '').substring(0, 7);
+            if (monthKey && firstReadingPerMonth[monthKey] === undefined) {
+              firstReadingPerMonth[monthKey] = parseFloat(r.Value || 0);
+            }
+          });
+
+          const months = Object.keys(firstReadingPerMonth).sort();
+
+          for (let i = 0; i < months.length - 1; i++) {
+            const currentMonth = months[i];
+            const nextMonth = months[i + 1];
+            
+            const v1 = firstReadingPerMonth[currentMonth];
+            const v2 = firstReadingPerMonth[nextMonth];
+            const diff = v2 - v1;
+
+            if (diff >= 0) {
+              const chartKey = viewMode === 'monthly' ? currentMonth : currentMonth.substring(0, 4);
+              const asset = assets.find(a => String(a.Id) === String(assetId));
+              const label = asset ? asset.FriendlyName : 'Egyéb';
+              
+              if (!dataMap[chartKey]) dataMap[chartKey] = { label: chartKey };
+              dataMap[chartKey][label] = (dataMap[chartKey][label] || 0) + diff;
+            }
+          }
+        });
+      });
+    } else {
+      const keyLen = viewMode === 'monthly' ? 7 : 4;
+      fInv.filter((inv: any) => {
+        if (isAll) return true;
+        if (isAllExpense) return categories.find(c => c.Name === inv.Type)?.Type !== 'income';
+        return filter.includes(inv.Type);
+      }).forEach((inv: any) => {
+        const key = String(inv.Month || "").substring(0, keyLen);
+        const asset = assets.find(a => String(a.Id) === String(inv.AssetId));
+        const label = asset ? asset.FriendlyName : 'Egyéb';
+        const isIncome = categories.find(c => c.Name === inv.Type)?.Type === 'income';
+        if (key && key.length >= 4) {
+          if (!dataMap[key]) dataMap[key] = { label: key };
+          if (isIncome) {
+            dataMap[key][`${label}_income`] = (dataMap[key][`${label}_income`] || 0) + parseFloat(inv.Amount || 0);
+          } else {
+            dataMap[key][label] = (dataMap[key][label] || 0) + parseFloat(inv.Amount || 0);
+          }
+        }
+      });
+    }
+    const sorted = Object.values(dataMap).sort((a: any, b: any) => a.label.localeCompare(b.label));
+    return chartRange === 'custom' 
+      ? sorted.filter((item: any) => item.label >= customStartDate && item.label <= customEndDate)
+      : (chartRange === 'all' ? sorted : sorted.slice(-chartRange));
+  }, [records, invoices, assets, filter, displayMode, viewMode, selectedAssetId, chartRange, customStartDate, customEndDate, categories]);
+
+  const renderCustomLegend = (props: any) => {
+    const { payload } = props;
+    if (!payload) return null;
+    const filteredPayload = payload.filter((entry: any) => !entry.dataKey || !entry.dataKey.endsWith('_income'));
+
+    return (
+      <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: '12px', paddingTop: '10px', fontSize: '11px' }}>
+        {filteredPayload.map((entry: any, index: number) => (
+          <div key={`legend-${index}`} style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+            <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: entry.color, display: 'inline-block' }} />
+            <span style={{ color: '#64748b', fontWeight: 600 }}>{entry.value}</span>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  const CustomTooltip = ({ active, payload, label }: any) => {
+    if (active && payload && payload.length) {
+      const unit = displayMode === 'cost' ? 'Ft' : '';
+      if (displayMode === 'usage') {
+        const total = payload.reduce((sum: number, entry: any) => sum + (Number(entry.value) || 0), 0);
+        return (
+          <div className="custom-tooltip-box">
+            <p className="tooltip-title">{label}</p>
+            {payload.map((entry: any, index: number) => (
+              <div key={index} style={{ color: entry.color }} className="tooltip-row">
+                <span>{entry.name}:</span>
+                <span className="tooltip-val">{Number(entry.value).toLocaleString()} {unit}</span>
+              </div>
+            ))}
+            <div className="tooltip-total font-emerald">
+              <span>Összesen:</span><span>{total.toLocaleString()} {unit}</span>
+            </div>
+          </div>
+        );
+      }
+
+      const expenses = payload.filter((p: any) => !p.dataKey.endsWith('_income'));
+      const incomes = payload.filter((p: any) => p.dataKey.endsWith('_income'));
+      const totalExp = expenses.reduce((sum: number, p: any) => sum + Number(p.value), 0);
+      const totalInc = incomes.reduce((sum: number, p: any) => sum + Number(p.value), 0);
+      const netTotal = totalInc - totalExp;
+
+      return (
+        <div className="custom-tooltip-box">
+          <p className="tooltip-title">{label}</p>
+          {incomes.length > 0 && (
+            <div className="tooltip-section">
+              <div className="section-badge badge-income">Bevételek</div>
+              {incomes.map((entry: any, index: number) => (
+                <div key={`inc-${index}`} className="tooltip-row">
+                  <span style={{ color: entry.color }}>{entry.name.replace(' (Bevétel)', '')}:</span>
+                  <span className="font-emerald">+{Number(entry.value).toLocaleString()} {unit}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {expenses.length > 0 && (
+            <div className="tooltip-section">
+              <div className="section-badge badge-expense">Kiadások</div>
+              {expenses.map((entry: any, index: number) => (
+                <div key={`exp-${index}`} className="tooltip-row">
+                  <span style={{ color: entry.color }}>{entry.name}:</span>
+                  <span>{Number(entry.value).toLocaleString()} {unit}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          
+          <div className="tooltip-footer">
+            {totalExp > 0 && <div className="tooltip-row font-rose"><span>Össz. Kiadás:</span><span>-{totalExp.toLocaleString()} {unit}</span></div>}
+            {totalInc > 0 && <div className="tooltip-row font-emerald"><span>Össz. Bevétel:</span><span>+{totalInc.toLocaleString()} {unit}</span></div>}
+            <div className="tooltip-net" style={{ color: netTotal > 0 ? '#10b981' : (netTotal < 0 ? '#ef4444' : '#0f172a') }}>
+              <span>Egyenleg:</span><span>{netTotal > 0 ? '+' : ''}{netTotal.toLocaleString()} {unit}</span>
+            </div>
+          </div>
+        </div>
+      );
+    }
+    return null;
+  };
+
   const rentalCalculation = useMemo(() => {
     if (!selectedRentalAssetId) return null;
-    const contract = rentalContracts.find(c => String(c.asset_id) === selectedRentalAssetId);
+    const safeContracts = Array.isArray(rentalContracts) ? rentalContracts : [];
+    const safeInvoices = Array.isArray(invoices) ? invoices : [];
+    const safePayments = Array.isArray(rentalPayments) ? rentalPayments : [];
 
-    // Számlák alapján kiszámolt havi rezsi a kiválasztott ingatlanra
-    const propertyInvoices = invoices.filter(i => String(i.AssetId) === selectedRentalAssetId);
+    const contract = safeContracts.find(c => String(c.asset_id) === selectedRentalAssetId);
+
+    const propertyInvoices = safeInvoices.filter(i => String(i.AssetId) === selectedRentalAssetId);
     
-    // Hónapok szerinti csoportosítás
     const monthlySummaryMap: { [month: string]: { utilitiesCost: number; rentCost: number; rentPaid: number; utilitiesPaid: number } } = {};
 
     propertyInvoices.forEach(inv => {
-      const m = String(inv.Month).substring(0, 7);
+      const m = String(inv.Month || '').substring(0, 7);
+      if (!m) return;
       if (!monthlySummaryMap[m]) monthlySummaryMap[m] = { utilitiesCost: 0, rentCost: contract ? parseFloat(contract.monthly_rent) : 120000, rentPaid: 0, utilitiesPaid: 0 };
       monthlySummaryMap[m].utilitiesCost += parseFloat(inv.Amount || 0);
     });
 
-    rentalPayments.forEach(pay => {
+    safePayments.forEach(pay => {
       const m = pay.month;
+      if (!m) return;
       if (!monthlySummaryMap[m]) monthlySummaryMap[m] = { utilitiesCost: 0, rentCost: contract ? parseFloat(contract.monthly_rent) : 120000, rentPaid: 0, utilitiesPaid: 0 };
       monthlySummaryMap[m].rentPaid += parseFloat(pay.rent_paid || 0);
       monthlySummaryMap[m].utilitiesPaid += parseFloat(pay.utilities_paid || 0);
     });
 
-    // Göngyölített egyenleg kiszámítása
     let totalDue = 0;
     let totalPaid = 0;
 
@@ -813,7 +1242,6 @@ function App() {
                     </select>
                   </div>
 
-                  {/* ALBÉRLETI SZERZŐDÉS ÉS BÉRLŐ MEGOSZTÁS */}
                   {!isReadOnly && (
                     <div className="ui-widget-card">
                       <h3 className="card-heading-clean">⚙️ Szerződés & Bérlő beállítása</h3>
@@ -843,7 +1271,6 @@ function App() {
                     </div>
                   )}
 
-                  {/* ALBÉRLETI BEFIZETÉS RÖGZÍTÉSE */}
                   {!isReadOnly && (
                     <div className="ui-widget-card">
                       <h3 className="card-heading-clean">💵 Befizetés Rögzítése</h3>
@@ -875,7 +1302,6 @@ function App() {
                 <section className="main-viewport-pane">
                   {rentalCalculation && (
                     <>
-                      {/* KPI KÁRTYÁK */}
                       <div className="kpi-cards-flex-grid">
                         <div className="ui-widget-card kpi-tile">
                           <span className="kpi-label">Kaució</span>
@@ -898,7 +1324,6 @@ function App() {
                         </div>
                       </div>
 
-                      {/* HAVI ELSZÁMOLÁSOK TÁBLÁZAT */}
                       <div className="ui-widget-card scrollable-list" style={{ maxHeight: '500px' }}>
                         <h3 className="card-heading-clean">📋 Havi Rezsi + Bérleti Díj Elszámolás</h3>
                         <div className="modern-data-table-stack">
@@ -1640,4 +2065,3 @@ function App() {
 }
 
 export default App;
-
