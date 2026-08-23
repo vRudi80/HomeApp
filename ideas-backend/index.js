@@ -13,7 +13,6 @@ const client = new OAuth2Client(GOOGLE_CLIENT_ID);
 
 const ADMIN_EMAILS = ['kovari.rudolf@gmail.com']; 
 
-// --- KAPCSOLAT GYŰJTŐ (Filess.io limit védelem) ---
 const pool = mysql.createPool({
     host: process.env.DB_HOST,
     port: process.env.DB_PORT || 3306,
@@ -64,7 +63,11 @@ function requireAdmin(req, res, next) {
 async function canAccessData(requesterId, requesterEmail, targetUserId) {
     if (requesterId === targetUserId) return true;
     const [rows] = await pool.query('SELECT id FROM shares WHERE owner_id = ? AND shared_with_email = ?', [targetUserId, requesterEmail]);
-    return rows.length > 0;
+    if (rows.length > 0) return true;
+
+    // Bérlői hozzáférés ellenőrzése
+    const [rentRows] = await pool.query('SELECT id FROM rental_contracts WHERE owner_id = ? AND tenant_email = ?', [targetUserId, requesterEmail]);
+    return rentRows.length > 0;
 }
 
 app.get('/ping', (req, res) => res.send('Szerver ébren van! 🚀'));
@@ -133,9 +136,7 @@ app.post('/api/assets', verifyUser, async (req, res) => {
             [req.userId, category, friendlyName, city || '', street || '', houseNumber || '', plateNumber || '', fuelType || 'Benzin', area === '' ? null : area]
         );
         res.status(201).json({ success: true, id: result.insertId });
-    } catch (err) {
-        res.status(500).json({ error: 'Hiba a mentésnél' });
-    }
+    } catch (err) { res.status(500).json({ error: 'Hiba a mentésnél' }); }
 });
 
 app.put('/api/assets/:id', verifyUser, async (req, res) => {
@@ -370,6 +371,55 @@ app.delete('/api/benchmarks/:id', verifyUser, async (req, res) => {
         await pool.query('DELETE FROM monthly_benchmarks WHERE id = ? AND user_id = ?', [req.params.id, req.userId]);
         res.status(204).end();
     } catch (err) { res.status(500).json({ error: 'Hiba a törlésnél' }); }
+});
+
+// --- ALBÉRLET SZERZŐDÉSEK ÉS BEFIZETÉSEK VÉGPONTOK ---
+app.get('/api/rentals/contracts', verifyUser, async (req, res) => {
+    try {
+        const [rows] = await pool.query('SELECT * FROM rental_contracts WHERE owner_id = ? OR tenant_email = ?', [req.userId, req.userEmail]);
+        res.json(rows);
+    } catch (err) { res.status(500).json({ error: 'DB hiba' }); }
+});
+
+app.post('/api/rentals/contracts', verifyUser, async (req, res) => {
+    const { assetId, tenantEmail, monthlyRent, depositAmount } = req.body;
+    try {
+        await pool.query(
+            `INSERT INTO rental_contracts (owner_id, asset_id, tenant_email, monthly_rent, deposit_amount)
+             VALUES (?, ?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE 
+                tenant_email = VALUES(tenant_email),
+                monthly_rent = VALUES(monthly_rent),
+                deposit_amount = VALUES(deposit_amount)`,
+            [req.userId, assetId, tenantEmail, monthlyRent || 120000, depositAmount || 240000]
+        );
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: 'Hiba a szerződés mentésekor' }); }
+});
+
+app.get('/api/rentals/payments', verifyUser, async (req, res) => {
+    const assetId = req.query.assetId;
+    try {
+        const [rows] = await pool.query('SELECT * FROM rental_payments WHERE asset_id = ? ORDER BY month DESC', [assetId]);
+        res.json(rows);
+    } catch (err) { res.status(500).json({ error: 'DB hiba' }); }
+});
+
+app.post('/api/rentals/payments', verifyUser, async (req, res) => {
+    const { assetId, month, rentPaid, utilitiesPaid, paymentDate, notes } = req.body;
+    try {
+        await pool.query(
+            `INSERT INTO rental_payments (owner_id, asset_id, month, rent_paid, utilities_paid, payment_date, notes)
+             VALUES (?, ?, ?, ?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE 
+                rent_paid = VALUES(rent_paid),
+                utilities_paid = VALUES(utilities_paid),
+                payment_date = VALUES(payment_date),
+                notes = VALUES(notes)`,
+            [req.userId, assetId, month, rentPaid || 0, utilitiesPaid || 0, paymentDate || null, notes || '']
+        );
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: 'Hiba a befizetés mentésekor' }); }
 });
 
 const PORT = process.env.PORT || 4000;
