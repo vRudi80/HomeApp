@@ -14,7 +14,6 @@ const PIE_COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6'];
 
 const ADMIN_EMAILS = ['kovari.rudolf@gmail.com'];
 
-// SÁVOS ÁRAMDÍJ KISZÁMÍTÓ SEGÉDFÜGGVÉNY (210 kWh limit)
 function calculateTieredPowerCost(kwh: number, priceLow = 36, priceHigh = 70.1, limit = 210): number {
   const safeKwh = isNaN(kwh) || kwh < 0 ? 0 : kwh;
   if (safeKwh <= limit) {
@@ -23,7 +22,6 @@ function calculateTieredPowerCost(kwh: number, priceLow = 36, priceHigh = 70.1, 
   return (limit * priceLow) + ((safeKwh - limit) * priceHigh);
 }
 
-// PONTOS EXCEL KÉPLET ALAPJÁN SZÁMOLÓ SEGÉDFÜGGVÉNY:
 function calculateExcelSolarSavings(totalCons: number, gridKwh: number, priceLow = 36, priceHigh = 70.1): number {
   const safeTotal = isNaN(totalCons) ? 0 : totalCons;
   const safeGrid = isNaN(gridKwh) ? 0 : gridKwh;
@@ -41,7 +39,6 @@ function calculateExcelSolarSavings(totalCons: number, gridKwh: number, priceLow
 }
 
 function App() {
-  // --- 1. SZEKCIÓ: ÁLLAPOTOK DEKLARÁCIÓJA ---
   const [user, setUser] = useState<any>(null);
   const [records, setRecords] = useState<any[]>([]);
   const [invoices, setInvoices] = useState<any[]>([]);
@@ -89,7 +86,6 @@ function App() {
 
   const [assetCategoryMap, setAssetCategoryMap] = useState<{ [key: string]: string[] }>({});
 
-  // EV ÉS NAPELEM STATE-EK
   const [evLogs, setEvLogs] = useState<any[]>([]);
   const [benchmarks, setBenchmarks] = useState<any[]>([]);
   const [editingEvLogId, setEditingEvLogId] = useState<number | null>(null);
@@ -119,7 +115,6 @@ function App() {
     ev_investment: '0'
   });
 
-  // ALBÉRLET STATE-EK
   const [rentalContracts, setRentalContracts] = useState<any[]>([]);
   const [rentalPayments, setRentalPayments] = useState<any[]>([]);
   const [selectedRentalAssetId, setSelectedRentalAssetId] = useState<string>('');
@@ -141,7 +136,6 @@ function App() {
   const isReadOnly = viewingUserId !== null && viewingUserId !== user?.sub;
   const isAdmin = user && ADMIN_EMAILS.includes(user.email);
 
-  // --- 2. SZEKCIÓ: ALAPFÜGGVÉNYEK ---
   function forceLogout() {
     googleLogout();
     setUser(null);
@@ -272,9 +266,14 @@ function App() {
       setInvoices(invRes.ok ? await invRes.json() : []);
       
       const loadedAssets = assetRes.ok ? await assetRes.json() : [];
-      setAssets(Array.isArray(loadedAssets) ? loadedAssets : []);
-      if (Array.isArray(loadedAssets) && loadedAssets.length > 0 && !selectedRentalAssetId) {
-        setSelectedRentalAssetId(String(loadedAssets[0].Id));
+      const safeAssets = Array.isArray(loadedAssets) ? loadedAssets : [];
+      setAssets(safeAssets);
+
+      const propAssets = safeAssets.filter((a: any) => a.Category === 'property');
+      if (propAssets.length > 0) {
+        setSelectedRentalAssetId(String(propAssets[0].Id));
+      } else {
+        setSelectedRentalAssetId('');
       }
 
       setCategories(catRes.ok ? await catRes.json() : []);
@@ -305,6 +304,8 @@ function App() {
       .then(res => res.json())
       .then(data => setRentalPayments(Array.isArray(data) ? data : []))
       .catch(err => console.error(err));
+    } else {
+      setRentalPayments([]);
     }
   }, [selectedRentalAssetId, user]);
 
@@ -350,7 +351,6 @@ function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
-  // --- 3. SZEKCIÓ: ADATMÓDOSÍTÓ METÓDUSOK ---
   async function handleSaveRentalContract() {
     if (!selectedRentalAssetId) return alert("Válassz ingatlant!");
     const res = await fetch(`${BACKEND_URL}/api/rentals/contracts`, {
@@ -555,7 +555,6 @@ function App() {
     if (res.ok) fetchMyShares(user.token);
   }
 
-  // --- 4. SZEKCIÓ: AUTOMATIKUS EFFEKTEK ---
   useEffect(() => {
     const savedToken = localStorage.getItem('userToken');
     if (savedToken) handleLoginSuccess(savedToken);
@@ -687,7 +686,6 @@ function App() {
     }).filter(d => d.totalKm > 0 || d.kwh100km > 0);
   }, [evLogs]);
 
-  // HIBATŰRŐ EXCEL MEGTÉRÜLÉSI MOTOR (NINCS MEGSZAKADÓ RANGE ERROR)
   const roiMetrics = useMemo(() => {
     let totalKwh = 0;
     let totalPaidHuf = 0;
@@ -757,7 +755,6 @@ function App() {
     const totalInvestment = parseFloat(latestBm.solar_investment || 1950400) + parseFloat(latestBm.ev_investment || 0);
     const currentBalance = totalSavingsHuf - totalInvestment;
 
-    // BIZTONSÁGOS DÁTUMSZÁMÍTÁS (HIBATŰRŐ)
     let elapsedDays = 1;
     if (safeEv.length > 0 && safeEv[safeEv.length - 1]?.date) {
       const parsedDate = new Date(safeEv[safeEv.length - 1].date);
@@ -1035,6 +1032,10 @@ function App() {
     };
   }, [selectedRentalAssetId, rentalContracts, invoices, rentalPayments]);
 
+  const propertyAssets = useMemo(() => {
+    return assets.filter(a => a.Category === 'property');
+  }, [assets]);
+
   return (
     <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
       <div className="app-container">
@@ -1087,7 +1088,7 @@ function App() {
                     </select>
                   </div>
 
-                  {!isReadOnly && (
+                  {!isReadOnly && assets.length > 0 && (
                     <div className="ui-widget-card">
                       <h3 className="card-heading-clean">{editingRecordId ? "✏️ Tranzakció szerkesztése" : "Új adat hozzáadása"}</h3>
                       <div className="mode-toggle-pill">
@@ -1191,460 +1192,491 @@ function App() {
                   </div>
 
                   <div className="ui-widget-card">
-                    <ResponsiveContainer width="100%" height={320}>
-                      <BarChart data={chartData} margin={{ top: 10, right: 15, left: 10, bottom: 0 }}>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                        <XAxis dataKey="label" fontSize={11} stroke="#64748b" tickLine={false} />
-                        <YAxis 
-                          fontSize={11} 
-                          stroke="#64748b" 
-                          tickLine={false} 
-                          axisLine={false} 
-                          width={65}
-                          tickFormatter={(val) => val >= 1000 ? `${(val / 1000).toLocaleString()}k` : val}
-                        />
-                        <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(0,0,0,0.01)' }} />
-                        <Legend content={renderCustomLegend} />
-                        
-                        {(selectedAssetId === 'all' ? assets : assets.filter(a => String(a.Id) === String(selectedAssetId))).map((asset, idx) => {
-                          const color = ASSET_COLORS[idx % ASSET_COLORS.length];
-                          return (
-                            <React.Fragment key={asset.Id}>
-                              <Bar dataKey={asset.FriendlyName} name={asset.FriendlyName} stackId="expense" fill={color} radius={[3,3,0,0]} />
-                              <Bar 
-                                dataKey={`${asset.FriendlyName}_income`} 
-                                name={`${asset.FriendlyName} (Bevétel)`} 
-                                stackId="income" 
-                                fill={color} 
-                                opacity={0.45} 
-                                radius={[3,3,0,0]}
-                              />
-                            </React.Fragment>
-                          );
-                        })}
-                      </BarChart>
-                    </ResponsiveContainer>
+                    {assets.length > 0 ? (
+                      <ResponsiveContainer width="100%" height={320}>
+                        <BarChart data={chartData} margin={{ top: 10, right: 15, left: 10, bottom: 0 }}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                          <XAxis dataKey="label" fontSize={11} stroke="#64748b" tickLine={false} />
+                          <YAxis 
+                            fontSize={11} 
+                            stroke="#64748b" 
+                            tickLine={false} 
+                            axisLine={false} 
+                            width={65}
+                            tickFormatter={(val) => val >= 1000 ? `${(val / 1000).toLocaleString()}k` : val}
+                          />
+                          <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(0,0,0,0.01)' }} />
+                          <Legend content={renderCustomLegend} />
+                          
+                          {(selectedAssetId === 'all' ? assets : assets.filter(a => String(a.Id) === String(selectedAssetId))).map((asset, idx) => {
+                            const color = ASSET_COLORS[idx % ASSET_COLORS.length];
+                            return (
+                              <React.Fragment key={asset.Id}>
+                                <Bar dataKey={asset.FriendlyName} name={asset.FriendlyName} stackId="expense" fill={color} radius={[3,3,0,0]} />
+                                <Bar 
+                                  dataKey={`${asset.FriendlyName}_income`} 
+                                  name={`${asset.FriendlyName} (Bevétel)`} 
+                                  stackId="income" 
+                                  fill={color} 
+                                  opacity={0.45} 
+                                  radius={[3,3,0,0]}
+                                />
+                              </React.Fragment>
+                            );
+                          })}
+                        </BarChart>
+                      </ResponsiveContainer>
+                    ) : (
+                      <div className="empty-state-text" style={{ padding: '40px 20px' }}>
+                        <h3>🌐 Nincs megjeleníthető adat</h3>
+                        <p>Még nincs eszköz rögzítve ehhez a fiókhoz. Lépj a <b>Beállítások</b> fülre új eszköz hozzáadásához!</p>
+                      </div>
+                    )}
                   </div>
                 </section>
               </div>
             )}
 
-            {/* ================= TAB 2: ALBÉRLET KEZELÉS ================= */}
+            {/* ================= TAB 2: ALBÉRLET KEZELÉS (EMPTY STATE PROTECTION) ================= */}
             {activeTab === 'rental' && (
-              <div className="dashboard-layout-grid">
-                <aside className="sidebar-container">
-                  <div className="ui-widget-card">
-                    <label className="input-label-flat">Ingatlan Kiválasztása</label>
-                    <select className="form-control-select" value={selectedRentalAssetId} onChange={(e) => setSelectedRentalAssetId(e.target.value)}>
-                      {assets.filter(a => a.Category === 'property').map((a: any) => (
-                        <option key={a.Id} value={String(a.Id)}>🏠 {a.FriendlyName}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {!isReadOnly && (
+              propertyAssets.length > 0 ? (
+                <div className="dashboard-layout-grid">
+                  <aside className="sidebar-container">
                     <div className="ui-widget-card">
-                      <h3 className="card-heading-clean">⚙️ Szerződés & Bérlő beállítása</h3>
-                      <div className="form-stack-vertical">
-                        <div>
-                          <label className="input-label-flat">Bérlő Google E-mail Címe</label>
-                          <input 
-                            type="email" 
-                            className="form-control-select" 
-                            placeholder="berlo@gmail.com" 
-                            value={rentalContractForm.tenantEmail} 
-                            onChange={(e) => setRentalContractForm({...rentalContractForm, tenantEmail: e.target.value})} 
-                          />
-                        </div>
-                        <div style={{ display: 'flex', gap: '8px' }}>
-                          <div style={{ flex: 1 }}>
-                            <label className="input-label-flat">Havi Bérleti Díj (Ft)</label>
-                            <input type="number" className="form-control-select" value={rentalContractForm.monthlyRent} onChange={(e) => setRentalContractForm({...rentalContractForm, monthlyRent: e.target.value})} />
+                      <label className="input-label-flat">Ingatlan Kiválasztása</label>
+                      <select className="form-control-select" value={selectedRentalAssetId} onChange={(e) => setSelectedRentalAssetId(e.target.value)}>
+                        {propertyAssets.map((a: any) => (
+                          <option key={a.Id} value={String(a.Id)}>🏠 {a.FriendlyName}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {!isReadOnly && (
+                      <div className="ui-widget-card">
+                        <h3 className="card-heading-clean">⚙️ Szerződés & Bérlő beállítása</h3>
+                        <div className="form-stack-vertical">
+                          <div>
+                            <label className="input-label-flat">Bérlő Google E-mail Címe</label>
+                            <input 
+                              type="email" 
+                              className="form-control-select" 
+                              placeholder="berlo@gmail.com" 
+                              value={rentalContractForm.tenantEmail} 
+                              onChange={(e) => setRentalContractForm({...rentalContractForm, tenantEmail: e.target.value})} 
+                            />
                           </div>
-                          <div style={{ flex: 1 }}>
-                            <label className="input-label-flat">Kaució (Ft)</label>
-                            <input type="number" className="form-control-select" value={rentalContractForm.depositAmount} onChange={(e) => setRentalContractForm({...rentalContractForm, depositAmount: e.target.value})} />
+                          <div style={{ display: 'flex', gap: '8px' }}>
+                            <div style={{ flex: 1 }}>
+                              <label className="input-label-flat">Havi Bérleti Díj (Ft)</label>
+                              <input type="number" className="form-control-select" value={rentalContractForm.monthlyRent} onChange={(e) => setRentalContractForm({...rentalContractForm, monthlyRent: e.target.value})} />
+                            </div>
+                            <div style={{ flex: 1 }}>
+                              <label className="input-label-flat">Kaució (Ft)</label>
+                              <input type="number" className="form-control-select" value={rentalContractForm.depositAmount} onChange={(e) => setRentalContractForm({...rentalContractForm, depositAmount: e.target.value})} />
+                            </div>
+                          </div>
+                          <button className="btn-action-primary" onClick={handleSaveRentalContract}>Szerződés & Megosztás Mentése</button>
+                        </div>
+                      </div>
+                    )}
+
+                    {!isReadOnly && (
+                      <div className="ui-widget-card">
+                        <h3 className="card-heading-clean">💵 Befizetés Rögzítése</h3>
+                        <div className="form-stack-vertical">
+                          <div>
+                            <label className="input-label-flat">Elszámolási Hónap</label>
+                            <input type="month" className="form-control-select" value={rentalPaymentForm.month} onChange={(e) => setRentalPaymentForm({...rentalPaymentForm, month: e.target.value})} />
+                          </div>
+                          <div style={{ display: 'flex', gap: '8px' }}>
+                            <div style={{ flex: 1 }}>
+                              <label className="input-label-flat">Befizetett Bérleti Díj</label>
+                              <input type="number" className="form-control-select" value={rentalPaymentForm.rentPaid} onChange={(e) => setRentalPaymentForm({...rentalPaymentForm, rentPaid: e.target.value})} />
+                            </div>
+                            <div style={{ flex: 1 }}>
+                              <label className="input-label-flat">Befizetett Rezsi</label>
+                              <input type="number" className="form-control-select" value={rentalPaymentForm.utilitiesPaid} onChange={(e) => setRentalPaymentForm({...rentalPaymentForm, utilitiesPaid: e.target.value})} />
+                            </div>
+                          </div>
+                          <div>
+                            <label className="input-label-flat">Fizetés Dátuma</label>
+                            <input type="date" className="form-control-select" value={rentalPaymentForm.paymentDate} onChange={(e) => setRentalPaymentForm({...rentalPaymentForm, paymentDate: e.target.value})} />
+                          </div>
+                          <button className="btn-submit-form" onClick={handleSaveRentalPayment}>Befizetés Rögzítése</button>
+                        </div>
+                      </div>
+                    )}
+                  </aside>
+
+                  <section className="main-viewport-pane">
+                    {rentalCalculation && (
+                      <>
+                        <div className="kpi-cards-flex-grid">
+                          <div className="ui-widget-card kpi-tile">
+                            <span className="kpi-label">Kaució</span>
+                            <span className="kpi-value">{parseFloat(rentalCalculation.contract?.deposit_amount || 0).toLocaleString()} Ft</span>
+                            <small className="kpi-sub">Bérlő: {rentalCalculation.contract?.tenant_email || 'Nincs megadva'}</small>
+                          </div>
+
+                          <div className="ui-widget-card kpi-tile">
+                            <span className="kpi-label">Havi Bérleti Díj</span>
+                            <span className="kpi-value font-emerald">{parseFloat(rentalCalculation.contract?.monthly_rent || 0).toLocaleString()} Ft/hó</span>
+                            <small className="kpi-sub">Szerződéses alapdíj</small>
+                          </div>
+
+                          <div className="ui-widget-card kpi-tile">
+                            <span className="kpi-label">Göngyölített Egyenleg</span>
+                            <span className="kpi-value" style={{ color: rentalCalculation.totalBalance >= 0 ? '#10b981' : '#ef4444' }}>
+                              {rentalCalculation.totalBalance >= 0 ? '+' : ''}{Math.round(rentalCalculation.totalBalance).toLocaleString()} Ft
+                            </span>
+                            <small className="kpi-sub">{rentalCalculation.totalBalance >= 0 ? 'Túlfizetés' : 'Elmaradás / Hátralék'}</small>
                           </div>
                         </div>
-                        <button className="btn-action-primary" onClick={handleSaveRentalContract}>Szerződés & Megosztás Mentése</button>
+
+                        <div className="ui-widget-card scrollable-list" style={{ maxHeight: '500px' }}>
+                          <h3 className="card-heading-clean">📋 Havi Rezsi + Bérleti Díj Elszámolás</h3>
+                          {rentalCalculation.monthlyBreakdown.length > 0 ? (
+                            <div className="modern-data-table-stack">
+                              {rentalCalculation.monthlyBreakdown.map((row: any) => (
+                                <div key={row.month} className="table-row-card" style={{ padding: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                  <div>
+                                    <div style={{ fontWeight: 800, fontSize: '1rem' }}>{row.month}</div>
+                                    <div style={{ fontSize: '0.8rem', color: '#64748b' }}>
+                                      Rezsi: {Math.round(row.utilitiesCost).toLocaleString()} Ft • Bérleti díj: {Math.round(row.rentCost).toLocaleString()} Ft
+                                    </div>
+                                  </div>
+                                  
+                                  <div style={{ textAlign: 'right' }}>
+                                    <div style={{ fontWeight: 800, fontSize: '0.95rem' }}>
+                                      Fizetendő: <span style={{ color: '#0f172a' }}>{Math.round(row.monthDue).toLocaleString()} Ft</span>
+                                    </div>
+                                    <div style={{ fontSize: '0.8rem' }}>
+                                      Befizetve: <span className="font-emerald">{Math.round(row.monthPaid).toLocaleString()} Ft</span> 
+                                      {row.diff !== 0 && (
+                                        <span style={{ color: row.diff > 0 ? '#10b981' : '#ef4444', marginLeft: '6px', fontWeight: 700 }}>
+                                          ({row.diff > 0 ? '+' : ''}{Math.round(row.diff).toLocaleString()} Ft)
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="empty-state-text">Még nincs elszámolás ehhez az ingatlanhoz.</div>
+                          )}
+                        </div>
+                      </>
+                    )}
+                  </section>
+                </div>
+              ) : (
+                <div className="ui-widget-card" style={{ padding: '50px 20px', textAlign: 'center' }}>
+                  <span style={{ fontSize: '3rem' }}>🔒</span>
+                  <h3 style={{ marginTop: '10px' }}>Nincs ingatlan hozzárendelve</h3>
+                  <p style={{ color: 'var(--text-muted)', maxWidth: '500px', margin: '10px auto 0 auto' }}>
+                    Ehhez a fiókhoz még nincs ingatlan rögzítve vagy megosztva. Ha te vagy a tulajdonos, adj hozzá egy ingatlant a <b>Beállítások</b> fülön!
+                  </p>
+                </div>
+              )
+            )}
+
+            {/* ================= TAB 3: MEGTÉRÜLÉS & EV TÖLTÉS (EMPTY STATE PROTECTION) ================= */}
+            {activeTab === 'ev-solar' && (
+              assets.length > 0 ? (
+                <div className="dashboard-layout-grid">
+                  <aside className="sidebar-container">
+                    {!isReadOnly && (
+                      <div className="ui-widget-card">
+                        <h3 className="card-heading-clean">{editingEvLogId ? "✏️ EV Töltés szerkesztése" : "🔌 Új EV Töltés rögzítése"}</h3>
+                        <div className="form-stack-vertical">
+                          <div>
+                            <label className="input-label-flat">Dátum</label>
+                            <input type="date" className="form-control-select" value={newEvLog.date} onChange={(e) => setNewEvLog({...newEvLog, date: e.target.value})} />
+                          </div>
+                          
+                          <div>
+                            <label className="input-label-flat">Töltőhely (Szabadon beírható)</label>
+                            <input 
+                              type="text" 
+                              list="charging-locations-list" 
+                              className="form-control-select" 
+                              placeholder="pl. Napelem, Tesla, Ionity..." 
+                              value={newEvLog.location} 
+                              onChange={(e) => setNewEvLog({...newEvLog, location: e.target.value})} 
+                            />
+                          </div>
+
+                          <div>
+                            <label className="input-label-flat">Töltési forrás</label>
+                            <select className="form-control-select" value={newEvLog.charge_source} onChange={(e) => setNewEvLog({...newEvLog, charge_source: e.target.value})}>
+                              <option value="Napelem">☀️ Napelem (Ingyenes)</option>
+                              <option value="Hálózat">🏠 Otthoni Hálózat</option>
+                              <option value="Nyilvános">⚡ Nyilvános Töltő</option>
+                            </select>
+                          </div>
+
+                          <div style={{ display: 'flex', gap: '8px' }}>
+                            <div style={{ flex: 1 }}>
+                              <label className="input-label-flat">Kezdő %</label>
+                              <input type="number" className="form-control-select" placeholder="pl. 25%" value={newEvLog.start_soc} onChange={(e) => setNewEvLog({...newEvLog, start_soc: e.target.value})} />
+                            </div>
+                            <div style={{ flex: 1 }}>
+                              <label className="input-label-flat">Feltöltött %</label>
+                              <input type="number" className="form-control-select" placeholder="pl. 80%" value={newEvLog.end_soc} onChange={(e) => setNewEvLog({...newEvLog, end_soc: e.target.value})} />
+                            </div>
+                          </div>
+
+                          <div style={{ display: 'flex', gap: '8px' }}>
+                            <div style={{ flex: 1 }}>
+                              <label className="input-label-flat">Betöltött kWh</label>
+                              <input type="number" step="0.01" className="form-control-select" placeholder="kWh" value={newEvLog.kwh_amount} onChange={(e) => setNewEvLog({...newEvLog, kwh_amount: e.target.value})} />
+                            </div>
+                            <div style={{ flex: 1 }}>
+                              <label className="input-label-flat">Költség (Ft)</label>
+                              <input type="number" className="form-control-select" placeholder="Ft" value={newEvLog.cost_huf} onChange={(e) => setNewEvLog({...newEvLog, cost_huf: e.target.value})} />
+                            </div>
+                          </div>
+
+                          <div>
+                            <label className="input-label-flat">Megtett KM (utolsó töltés óta)</label>
+                            <input type="number" className="form-control-select" placeholder="pl. 150 km" value={newEvLog.driven_km} onChange={(e) => setNewEvLog({...newEvLog, driven_km: e.target.value})} />
+                          </div>
+
+                          <div className="action-buttons-row">
+                            <button className="btn-submit-form" onClick={handleEvLogSave}>
+                              {editingEvLogId ? 'Módosítás mentése' : 'Töltés mentése'}
+                            </button>
+                            {editingEvLogId && <button className="btn-action-primary" style={{backgroundColor: '#64748b'}} onClick={cancelEvLogEdit}>Mégse</button>}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {!isReadOnly && (
+                      <div className="ui-widget-card">
+                        <h3 className="card-heading-clean">☀️ Napelem & Áram Referencia</h3>
+                        <div className="form-stack-vertical">
+                          <div>
+                            <label className="input-label-flat">Hónap Kiválasztása</label>
+                            <input 
+                              type="month" 
+                              className="form-control-select" 
+                              value={benchmarkForm.month} 
+                              onChange={(e) => handleBenchmarkMonthChange(e.target.value)} 
+                            />
+                          </div>
+
+                          <div>
+                            <label className="input-label-flat">Összes Háztartási Fogyasztás (kWh)</label>
+                            <input type="number" step="0.1" className="form-control-select" placeholder="pl. 325 kWh" value={benchmarkForm.total_consumed_kwh} onChange={(e) => setBenchmarkForm({...benchmarkForm, total_consumed_kwh: e.target.value})} />
+                          </div>
+                          
+                          <div style={{ display: 'flex', gap: '8px' }}>
+                            <div style={{ flex: 1 }}>
+                              <label className="input-label-flat">Napelem Termelés (kWh)</label>
+                              <input type="number" step="0.1" className="form-control-select" placeholder="kWh" value={benchmarkForm.solar_kwh} onChange={(e) => setBenchmarkForm({...benchmarkForm, solar_kwh: e.target.value})} />
+                            </div>
+                            <div style={{ flex: 1 }}>
+                              <label className="input-label-flat">Hálózati Vételezés (kWh)</label>
+                              <input type="number" step="0.1" className="form-control-select" placeholder="kWh" value={benchmarkForm.grid_kwh} onChange={(e) => setBenchmarkForm({...benchmarkForm, grid_kwh: e.target.value})} />
+                            </div>
+                          </div>
+
+                          <div style={{ display: 'flex', gap: '8px' }}>
+                            <div style={{ flex: 1 }}>
+                              <label className="input-label-flat">Benzinár (Ft/l)</label>
+                              <input type="number" className="form-control-select" value={benchmarkForm.gasoline_price} onChange={(e) => setBenchmarkForm({...benchmarkForm, gasoline_price: e.target.value})} />
+                            </div>
+                            <div style={{ flex: 1 }}>
+                              <label className="input-label-flat">Ref. Fogy. (l/100km)</label>
+                              <input type="number" step="0.1" className="form-control-select" value={benchmarkForm.avg_consumption} onChange={(e) => setBenchmarkForm({...benchmarkForm, avg_consumption: e.target.value})} />
+                            </div>
+                          </div>
+
+                          <div>
+                            <label className="input-label-flat">Napelem Beruházás (Ft)</label>
+                            <input type="number" className="form-control-select" value={benchmarkForm.solar_investment} onChange={(e) => setBenchmarkForm({...benchmarkForm, solar_investment: e.target.value})} />
+                          </div>
+
+                          <button className="btn-action-primary" onClick={handleBenchmarkSave}>Adatok mentése ehhez a hónaphoz</button>
+                        </div>
+                      </div>
+                    )}
+                  </aside>
+
+                  <section className="main-viewport-pane">
+                    <div className="kpi-cards-flex-grid">
+                      <div className="ui-widget-card kpi-tile">
+                        <span className="kpi-label">Zöld Áram Arány</span>
+                        <span className="kpi-value font-emerald">{roiMetrics.greenRatio.toFixed(1)}%</span>
+                        <small className="kpi-sub">{roiMetrics.solarKwh.toFixed(1)} kWh napelemből</small>
+                      </div>
+
+                      <div className="ui-widget-card kpi-tile">
+                        <span className="kpi-label">EV Költség / KM</span>
+                        <span className="kpi-value">{roiMetrics.costPerKm.toFixed(1)} Ft/km</span>
+                        <small className="kpi-sub">Megtett: {roiMetrics.totalKm.toLocaleString()} km</small>
+                      </div>
+
+                      <div className="ui-widget-card kpi-tile">
+                        <span className="kpi-label">Összes Megtakarítás</span>
+                        <span className="kpi-value font-emerald">+{Math.round(roiMetrics.totalSavingsHuf).toLocaleString()} Ft</span>
+                        <small className="kpi-sub">EV: {Math.round(roiMetrics.evSavingsHuf).toLocaleString()} Ft | Áram: {Math.round(roiMetrics.solarHouseholdSavingsHuf).toLocaleString()} Ft</small>
+                      </div>
+
+                      <div className="ui-widget-card kpi-tile">
+                        <span className="kpi-label">Megtérülési Egyenleg</span>
+                        <span className="kpi-value" style={{ color: roiMetrics.currentBalance >= 0 ? '#10b981' : '#ef4444' }}>
+                          {roiMetrics.currentBalance >= 0 ? '+' : ''}{Math.round(roiMetrics.currentBalance).toLocaleString()} Ft
+                        </span>
+                        <small className="kpi-sub">Beruházás: {Math.round(roiMetrics.totalInvestment).toLocaleString()} Ft</small>
                       </div>
                     </div>
-                  )}
 
-                  {!isReadOnly && (
                     <div className="ui-widget-card">
-                      <h3 className="card-heading-clean">💵 Befizetés Rögzítése</h3>
-                      <div className="form-stack-vertical">
-                        <div>
-                          <label className="input-label-flat">Elszámolási Hónap</label>
-                          <input type="month" className="form-control-select" value={rentalPaymentForm.month} onChange={(e) => setRentalPaymentForm({...rentalPaymentForm, month: e.target.value})} />
-                        </div>
-                        <div style={{ display: 'flex', gap: '8px' }}>
-                          <div style={{ flex: 1 }}>
-                            <label className="input-label-flat">Befizetett Bérleti Díj</label>
-                            <input type="number" className="form-control-select" value={rentalPaymentForm.rentPaid} onChange={(e) => setRentalPaymentForm({...rentalPaymentForm, rentPaid: e.target.value})} />
-                          </div>
-                          <div style={{ flex: 1 }}>
-                            <label className="input-label-flat">Befizetett Rezsi</label>
-                            <input type="number" className="form-control-select" value={rentalPaymentForm.utilitiesPaid} onChange={(e) => setRentalPaymentForm({...rentalPaymentForm, utilitiesPaid: e.target.value})} />
-                          </div>
-                        </div>
-                        <div>
-                          <label className="input-label-flat">Fizetés Dátuma</label>
-                          <input type="date" className="form-control-select" value={rentalPaymentForm.paymentDate} onChange={(e) => setRentalPaymentForm({...rentalPaymentForm, paymentDate: e.target.value})} />
-                        </div>
-                        <button className="btn-submit-form" onClick={handleSaveRentalPayment}>Befizetés Rögzítése</button>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                        <h3 className="card-heading-clean" style={{ margin: 0 }}>📊 Várható Megtérülés: <span className="highlight-blue">{roiMetrics.estimatedPaybackDate}</span></h3>
+                        <span className="row-badge-type">Napi átlag: +{Math.round(roiMetrics.dailySavingsHuf).toLocaleString()} Ft/nap</span>
+                      </div>
+
+                      <div className="roi-progress-wrapper">
+                        <div className="roi-progress-bar" style={{ width: `${Math.min(100, Math.max(0, (roiMetrics.totalSavingsHuf / (roiMetrics.totalInvestment || 1)) * 100))}%` }} />
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '8px', fontSize: '0.8rem', color: '#64748b' }}>
+                        <span>Eltelt napok: {roiMetrics.elapsedDays} nap</span>
+                        <span>Hátralévő napok: {roiMetrics.remainingDays} nap</span>
                       </div>
                     </div>
-                  )}
-                </aside>
 
-                <section className="main-viewport-pane">
-                  {rentalCalculation && (
-                    <>
-                      <div className="kpi-cards-flex-grid">
-                        <div className="ui-widget-card kpi-tile">
-                          <span className="kpi-label">Kaució</span>
-                          <span className="kpi-value">{parseFloat(rentalCalculation.contract?.deposit_amount || 240000).toLocaleString()} Ft</span>
-                          <small className="kpi-sub">Bérlő: {rentalCalculation.contract?.tenant_email || 'Nincs megadva'}</small>
-                        </div>
-
-                        <div className="ui-widget-card kpi-tile">
-                          <span className="kpi-label">Havi Bérleti Díj</span>
-                          <span className="kpi-value font-emerald">{parseFloat(rentalCalculation.contract?.monthly_rent || 120000).toLocaleString()} Ft/hó</span>
-                          <small className="kpi-sub">Szerződéses alapdíj</small>
-                        </div>
-
-                        <div className="ui-widget-card kpi-tile">
-                          <span className="kpi-label">Göngyölített Egyenleg</span>
-                          <span className="kpi-value" style={{ color: rentalCalculation.totalBalance >= 0 ? '#10b981' : '#ef4444' }}>
-                            {rentalCalculation.totalBalance >= 0 ? '+' : ''}{Math.round(rentalCalculation.totalBalance).toLocaleString()} Ft
-                          </span>
-                          <small className="kpi-sub">{rentalCalculation.totalBalance >= 0 ? 'Túlfizetés' : 'Elmaradás / Hátralék'}</small>
-                        </div>
+                    {solarEnergyBalanceData.length > 0 && (
+                      <div className="ui-widget-card">
+                        <h3 className="card-heading-clean">☀️ Havi Energia Mérleg (kWh)</h3>
+                        <ResponsiveContainer width="100%" height={240}>
+                          <BarChart data={solarEnergyBalanceData} margin={{ top: 10, right: 15, left: 10, bottom: 0 }}>
+                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                            <XAxis dataKey="month" fontSize={11} stroke="#64748b" tickLine={false} />
+                            <YAxis fontSize={11} stroke="#64748b" tickLine={false} axisLine={false} width={45} />
+                            <Tooltip />
+                            <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
+                            <Bar dataKey="consumed" name="Összes Fogyasztás" fill="#3b82f6" radius={[3,3,0,0]} />
+                            <Bar dataKey="solar" name="Napelem Termelés" fill="#10b981" radius={[3,3,0,0]} />
+                            <Bar dataKey="grid" name="Hálózati Vételezés" fill="#ef4444" radius={[3,3,0,0]} />
+                          </BarChart>
+                        </ResponsiveContainer>
                       </div>
+                    )}
 
-                      <div className="ui-widget-card scrollable-list" style={{ maxHeight: '500px' }}>
-                        <h3 className="card-heading-clean">📋 Havi Rezsi + Bérleti Díj Elszámolás</h3>
-                        <div className="modern-data-table-stack">
-                          {rentalCalculation.monthlyBreakdown.map((row: any) => (
-                            <div key={row.month} className="table-row-card" style={{ padding: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    {evEfficiencyData.length > 0 && (
+                      <div className="ui-widget-card">
+                        <h3 className="card-heading-clean">🚗 Autó Fogyasztási & Km-Költség Trend</h3>
+                        <ResponsiveContainer width="100%" height={220}>
+                          <ComposedChart data={evEfficiencyData} margin={{ top: 10, right: 15, left: 10, bottom: 0 }}>
+                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                            <XAxis dataKey="month" fontSize={11} stroke="#64748b" tickLine={false} />
+                            <YAxis yAxisId="left" fontSize={11} stroke="#8b5cf6" tickLine={false} axisLine={false} width={45} label={{ value: 'kWh/100km', angle: -90, position: 'insideLeft', style: { fontSize: '10px', fill: '#8b5cf6' } }} />
+                            <YAxis yAxisId="right" orientation="right" fontSize={11} stroke="#10b981" tickLine={false} axisLine={false} width={45} label={{ value: 'Ft/km', angle: 90, position: 'insideRight', style: { fontSize: '10px', fill: '#10b981' } }} />
+                            <Tooltip />
+                            <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
+                            <Bar yAxisId="left" dataKey="kwh100km" name="Fogyasztás (kWh/100km)" fill="#8b5cf6" radius={[3,3,0,0]} />
+                            <Line yAxisId="right" type="monotone" dataKey="ftKm" name="Költség (Ft/km)" stroke="#10b981" strokeWidth={3} dot={{ r: 4 }} />
+                          </ComposedChart>
+                        </ResponsiveContainer>
+                      </div>
+                    )}
+
+                    <div className="ui-widget-card scrollable-list" style={{ maxHeight: '250px' }}>
+                      <h3 className="card-heading-clean">☀️ Historikus Napelem & Áram Referenciák</h3>
+                      <div className="modern-data-table-stack">
+                        {benchmarks.map((bm: any) => {
+                          const totalCons = parseFloat(bm.total_consumed_kwh || 0);
+                          const gridKwh = parseFloat(bm.grid_kwh || 0);
+                          const savedKwh = Math.max(0, totalCons - gridKwh);
+
+                          return (
+                            <div key={bm.id || bm.month} className="table-row-card" style={{ padding: '8px 12px' }}>
                               <div>
-                                <div style={{ fontWeight: 800, fontSize: '1rem' }}>{row.month}</div>
-                                <div style={{ fontSize: '0.8rem', color: '#64748b' }}>
-                                  Rezsi: {Math.round(row.utilitiesCost).toLocaleString()} Ft • Bérleti díj: {Math.round(row.rentCost).toLocaleString()} Ft
+                                <div style={{ fontWeight: 700, fontSize: '0.9rem' }}>{bm.month}</div>
+                                <div style={{ fontSize: '0.75rem', color: '#64748b' }}>
+                                  Benzin: {bm.gasoline_price} Ft/l • Fogyasztás: {totalCons} kWh (Hálózat: {gridKwh} kWh)
                                 </div>
                               </div>
-                              
-                              <div style={{ textAlign: 'right' }}>
-                                <div style={{ fontWeight: 800, fontSize: '0.95rem' }}>
-                                  Fizetendő: <span style={{ color: '#0f172a' }}>{Math.round(row.monthDue).toLocaleString()} Ft</span>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                <div style={{ textAlign: 'right' }}>
+                                  <div style={{ fontWeight: 700, fontSize: '0.85rem' }} className="font-emerald">Megspórolt: {savedKwh.toFixed(1)} kWh</div>
+                                  <div style={{ fontSize: '0.75rem', color: '#64748b' }}>Termelt: {bm.solar_kwh || 0} kWh</div>
                                 </div>
-                                <div style={{ fontSize: '0.8rem' }}>
-                                  Befizetve: <span className="font-emerald">{Math.round(row.monthPaid).toLocaleString()} Ft</span> 
-                                  {row.diff !== 0 && (
-                                    <span style={{ color: row.diff > 0 ? '#10b981' : '#ef4444', marginLeft: '6px', fontWeight: 700 }}>
-                                      ({row.diff > 0 ? '+' : ''}{Math.round(row.diff).toLocaleString()} Ft)
-                                    </span>
-                                  )}
+                                {!isReadOnly && (
+                                  <div className="row-buttons-trigger">
+                                    <button onClick={() => handleEditBenchmark(bm)}>✏️</button>
+                                    <button onClick={async () => { if(window.confirm(`Biztosan törlöd a ${bm.month} havi referenciát?`)) { await fetch(`${BACKEND_URL}/api/benchmarks/${bm.id}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${user.token}` } }); fetchAll(user.token); } }}>❌</button>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                        {benchmarks.length === 0 && <div className="empty-state-text">Még nincs rögzített havi referencia.</div>}
+                      </div>
+                    </div>
+
+                    <div className="dashboard-layout-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
+                      <div className="ui-widget-card">
+                        <h3 className="card-heading-clean">🎯 Töltőhelyek Megoszlása (kWh)</h3>
+                        <ResponsiveContainer width="100%" height={220}>
+                          <PieChart>
+                            <Pie data={roiMetrics.locationPieData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={70} label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}>
+                              {roiMetrics.locationPieData.map((_, idx) => (
+                                <Cell key={`cell-${idx}`} fill={PIE_COLORS[idx % PIE_COLORS.length]} />
+                              ))}
+                            </Pie>
+                            <Tooltip formatter={(val) => `${val} kWh`} />
+                          </PieChart>
+                        </ResponsiveContainer>
+                      </div>
+
+                      <div className="ui-widget-card scrollable-list" style={{ maxHeight: '280px' }}>
+                        <h3 className="card-heading-clean">📜 Töltési Napló (Szerkeszthető)</h3>
+                        <div className="modern-data-table-stack">
+                          {evLogs.map((log: any) => (
+                            <div key={log.id} className="table-row-card" style={{ padding: '8px 12px' }}>
+                              <div>
+                                <div style={{ fontWeight: 700, fontSize: '0.85rem' }}>{log.location} ({log.charge_source})</div>
+                                <div style={{ fontSize: '0.75rem', color: '#64748b' }}>
+                                  {String(log.date).substring(0, 10)} 
+                                  {log.start_soc !== null && log.end_soc !== null ? ` • ${log.start_soc}% ➔ ${log.end_soc}%` : ''} 
+                                  {log.driven_km ? ` • ${log.driven_km} km` : ''}
                                 </div>
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                <div style={{ textAlign: 'right' }}>
+                                  <div style={{ fontWeight: 700, fontSize: '0.85rem' }} className="font-emerald">{log.kwh_amount} kWh</div>
+                                  <div style={{ fontSize: '0.75rem', color: '#64748b' }}>{parseFloat(log.cost_huf).toLocaleString()} Ft</div>
+                                </div>
+                                {!isReadOnly && (
+                                  <div className="row-buttons-trigger">
+                                    <button onClick={() => handleEditEvLog(log)}>✏️</button>
+                                    <button onClick={async () => { if(window.confirm("Biztosan törlöd a töltést?")) { await fetch(`${BACKEND_URL}/api/ev-logs/${log.id}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${user.token}` } }); fetchAll(user.token); } }}>❌</button>
+                                  </div>
+                                )}
                               </div>
                             </div>
                           ))}
                         </div>
                       </div>
-                    </>
-                  )}
-                </section>
-              </div>
-            )}
-
-            {/* ================= TAB 3: MEGTÉRÜLÉS & EV TÖLTÉS ================= */}
-            {activeTab === 'ev-solar' && (
-              <div className="dashboard-layout-grid">
-                <aside className="sidebar-container">
-                  {!isReadOnly && (
-                    <div className="ui-widget-card">
-                      <h3 className="card-heading-clean">{editingEvLogId ? "✏️ EV Töltés szerkesztése" : "🔌 Új EV Töltés rögzítése"}</h3>
-                      <div className="form-stack-vertical">
-                        <div>
-                          <label className="input-label-flat">Dátum</label>
-                          <input type="date" className="form-control-select" value={newEvLog.date} onChange={(e) => setNewEvLog({...newEvLog, date: e.target.value})} />
-                        </div>
-                        
-                        <div>
-                          <label className="input-label-flat">Töltőhely (Szabadon beírható)</label>
-                          <input 
-                            type="text" 
-                            list="charging-locations-list" 
-                            className="form-control-select" 
-                            placeholder="pl. Napelem, Tesla, Ionity..." 
-                            value={newEvLog.location} 
-                            onChange={(e) => setNewEvLog({...newEvLog, location: e.target.value})} 
-                          />
-                        </div>
-
-                        <div>
-                          <label className="input-label-flat">Töltési forrás</label>
-                          <select className="form-control-select" value={newEvLog.charge_source} onChange={(e) => setNewEvLog({...newEvLog, charge_source: e.target.value})}>
-                            <option value="Napelem">☀️ Napelem (Ingyenes)</option>
-                            <option value="Hálózat">🏠 Otthoni Hálózat</option>
-                            <option value="Nyilvános">⚡ Nyilvános Töltő</option>
-                          </select>
-                        </div>
-
-                        <div style={{ display: 'flex', gap: '8px' }}>
-                          <div style={{ flex: 1 }}>
-                            <label className="input-label-flat">Kezdő %</label>
-                            <input type="number" className="form-control-select" placeholder="pl. 25%" value={newEvLog.start_soc} onChange={(e) => setNewEvLog({...newEvLog, start_soc: e.target.value})} />
-                          </div>
-                          <div style={{ flex: 1 }}>
-                            <label className="input-label-flat">Feltöltött %</label>
-                            <input type="number" className="form-control-select" placeholder="pl. 80%" value={newEvLog.end_soc} onChange={(e) => setNewEvLog({...newEvLog, end_soc: e.target.value})} />
-                          </div>
-                        </div>
-
-                        <div style={{ display: 'flex', gap: '8px' }}>
-                          <div style={{ flex: 1 }}>
-                            <label className="input-label-flat">Betöltött kWh</label>
-                            <input type="number" step="0.01" className="form-control-select" placeholder="kWh" value={newEvLog.kwh_amount} onChange={(e) => setNewEvLog({...newEvLog, kwh_amount: e.target.value})} />
-                          </div>
-                          <div style={{ flex: 1 }}>
-                            <label className="input-label-flat">Költség (Ft)</label>
-                            <input type="number" className="form-control-select" placeholder="Ft" value={newEvLog.cost_huf} onChange={(e) => setNewEvLog({...newEvLog, cost_huf: e.target.value})} />
-                          </div>
-                        </div>
-
-                        <div>
-                          <label className="input-label-flat">Megtett KM (utolsó töltés óta)</label>
-                          <input type="number" className="form-control-select" placeholder="pl. 150 km" value={newEvLog.driven_km} onChange={(e) => setNewEvLog({...newEvLog, driven_km: e.target.value})} />
-                        </div>
-
-                        <div className="action-buttons-row">
-                          <button className="btn-submit-form" onClick={handleEvLogSave}>
-                            {editingEvLogId ? 'Módosítás mentése' : 'Töltés mentése'}
-                          </button>
-                          {editingEvLogId && <button className="btn-action-primary" style={{backgroundColor: '#64748b'}} onClick={cancelEvLogEdit}>Mégse</button>}
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {!isReadOnly && (
-                    <div className="ui-widget-card">
-                      <h3 className="card-heading-clean">☀️ Napelem & Áram Referencia</h3>
-                      <div className="form-stack-vertical">
-                        <div>
-                          <label className="input-label-flat">Hónap Kiválasztása</label>
-                          <input 
-                            type="month" 
-                            className="form-control-select" 
-                            value={benchmarkForm.month} 
-                            onChange={(e) => handleBenchmarkMonthChange(e.target.value)} 
-                          />
-                        </div>
-
-                        <div>
-                          <label className="input-label-flat">Összes Háztartási Fogyasztás (kWh)</label>
-                          <input type="number" step="0.1" className="form-control-select" placeholder="pl. 325 kWh" value={benchmarkForm.total_consumed_kwh} onChange={(e) => setBenchmarkForm({...benchmarkForm, total_consumed_kwh: e.target.value})} />
-                        </div>
-                        
-                        <div style={{ display: 'flex', gap: '8px' }}>
-                          <div style={{ flex: 1 }}>
-                            <label className="input-label-flat">Napelem Termelés (kWh)</label>
-                            <input type="number" step="0.1" className="form-control-select" placeholder="kWh" value={benchmarkForm.solar_kwh} onChange={(e) => setBenchmarkForm({...benchmarkForm, solar_kwh: e.target.value})} />
-                          </div>
-                          <div style={{ flex: 1 }}>
-                            <label className="input-label-flat">Hálózati Vételezés (kWh)</label>
-                            <input type="number" step="0.1" className="form-control-select" placeholder="kWh" value={benchmarkForm.grid_kwh} onChange={(e) => setBenchmarkForm({...benchmarkForm, grid_kwh: e.target.value})} />
-                          </div>
-                        </div>
-
-                        <div style={{ display: 'flex', gap: '8px' }}>
-                          <div style={{ flex: 1 }}>
-                            <label className="input-label-flat">Benzinár (Ft/l)</label>
-                            <input type="number" className="form-control-select" value={benchmarkForm.gasoline_price} onChange={(e) => setBenchmarkForm({...benchmarkForm, gasoline_price: e.target.value})} />
-                          </div>
-                          <div style={{ flex: 1 }}>
-                            <label className="input-label-flat">Ref. Fogy. (l/100km)</label>
-                            <input type="number" step="0.1" className="form-control-select" value={benchmarkForm.avg_consumption} onChange={(e) => setBenchmarkForm({...benchmarkForm, avg_consumption: e.target.value})} />
-                          </div>
-                        </div>
-
-                        <div>
-                          <label className="input-label-flat">Napelem Beruházás (Ft)</label>
-                          <input type="number" className="form-control-select" value={benchmarkForm.solar_investment} onChange={(e) => setBenchmarkForm({...benchmarkForm, solar_investment: e.target.value})} />
-                        </div>
-
-                        <button className="btn-action-primary" onClick={handleBenchmarkSave}>Adatok mentése ehhez a hónaphoz</button>
-                      </div>
-                    </div>
-                  )}
-                </aside>
-
-                <section className="main-viewport-pane">
-                  <div className="kpi-cards-flex-grid">
-                    <div className="ui-widget-card kpi-tile">
-                      <span className="kpi-label">Zöld Áram Arány</span>
-                      <span className="kpi-value font-emerald">{roiMetrics.greenRatio.toFixed(1)}%</span>
-                      <small className="kpi-sub">{roiMetrics.solarKwh.toFixed(1)} kWh napelemből</small>
                     </div>
 
-                    <div className="ui-widget-card kpi-tile">
-                      <span className="kpi-label">EV Költség / KM</span>
-                      <span className="kpi-value">{roiMetrics.costPerKm.toFixed(1)} Ft/km</span>
-                      <small className="kpi-sub">Megtett: {roiMetrics.totalKm.toLocaleString()} km</small>
-                    </div>
-
-                    <div className="ui-widget-card kpi-tile">
-                      <span className="kpi-label">Összes Megtakarítás</span>
-                      <span className="kpi-value font-emerald">+{Math.round(roiMetrics.totalSavingsHuf).toLocaleString()} Ft</span>
-                      <small className="kpi-sub">EV: {Math.round(roiMetrics.evSavingsHuf).toLocaleString()} Ft | Áram: {Math.round(roiMetrics.solarHouseholdSavingsHuf).toLocaleString()} Ft</small>
-                    </div>
-
-                    <div className="ui-widget-card kpi-tile">
-                      <span className="kpi-label">Megtérülési Egyenleg</span>
-                      <span className="kpi-value" style={{ color: roiMetrics.currentBalance >= 0 ? '#10b981' : '#ef4444' }}>
-                        {roiMetrics.currentBalance >= 0 ? '+' : ''}{Math.round(roiMetrics.currentBalance).toLocaleString()} Ft
-                      </span>
-                      <small className="kpi-sub">Beruházás: {Math.round(roiMetrics.totalInvestment).toLocaleString()} Ft</small>
-                    </div>
-                  </div>
-
-                  <div className="ui-widget-card">
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                      <h3 className="card-heading-clean" style={{ margin: 0 }}>📊 Várható Megtérülés: <span className="highlight-blue">{roiMetrics.estimatedPaybackDate}</span></h3>
-                      <span className="row-badge-type">Napi átlag: +{Math.round(roiMetrics.dailySavingsHuf).toLocaleString()} Ft/nap</span>
-                    </div>
-
-                    <div className="roi-progress-wrapper">
-                      <div className="roi-progress-bar" style={{ width: `${Math.min(100, Math.max(0, (roiMetrics.totalSavingsHuf / (roiMetrics.totalInvestment || 1)) * 100))}%` }} />
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '8px', fontSize: '0.8rem', color: '#64748b' }}>
-                      <span>Eltelt napok: {roiMetrics.elapsedDays} nap</span>
-                      <span>Hátralévő napok: {roiMetrics.remainingDays} nap</span>
-                    </div>
-                  </div>
-
-                  <div className="ui-widget-card">
-                    <h3 className="card-heading-clean">☀️ Havi Energia Mérleg (kWh)</h3>
-                    <ResponsiveContainer width="100%" height={240}>
-                      <BarChart data={solarEnergyBalanceData} margin={{ top: 10, right: 15, left: 10, bottom: 0 }}>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                        <XAxis dataKey="month" fontSize={11} stroke="#64748b" tickLine={false} />
-                        <YAxis fontSize={11} stroke="#64748b" tickLine={false} axisLine={false} width={45} />
-                        <Tooltip />
-                        <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
-                        <Bar dataKey="consumed" name="Összes Fogyasztás" fill="#3b82f6" radius={[3,3,0,0]} />
-                        <Bar dataKey="solar" name="Napelem Termelés" fill="#10b981" radius={[3,3,0,0]} />
-                        <Bar dataKey="grid" name="Hálózati Vételezés" fill="#ef4444" radius={[3,3,0,0]} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
-
-                  {evEfficiencyData.length > 0 && (
-                    <div className="ui-widget-card">
-                      <h3 className="card-heading-clean">🚗 Autó Fogyasztási & Km-Költség Trend</h3>
-                      <ResponsiveContainer width="100%" height={220}>
-                        <ComposedChart data={evEfficiencyData} margin={{ top: 10, right: 15, left: 10, bottom: 0 }}>
-                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                          <XAxis dataKey="month" fontSize={11} stroke="#64748b" tickLine={false} />
-                          <YAxis yAxisId="left" fontSize={11} stroke="#8b5cf6" tickLine={false} axisLine={false} width={45} label={{ value: 'kWh/100km', angle: -90, position: 'insideLeft', style: { fontSize: '10px', fill: '#8b5cf6' } }} />
-                          <YAxis yAxisId="right" orientation="right" fontSize={11} stroke="#10b981" tickLine={false} axisLine={false} width={45} label={{ value: 'Ft/km', angle: 90, position: 'insideRight', style: { fontSize: '10px', fill: '#10b981' } }} />
-                          <Tooltip />
-                          <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
-                          <Bar yAxisId="left" dataKey="kwh100km" name="Fogyasztás (kWh/100km)" fill="#8b5cf6" radius={[3,3,0,0]} />
-                          <Line yAxisId="right" type="monotone" dataKey="ftKm" name="Költség (Ft/km)" stroke="#10b981" strokeWidth={3} dot={{ r: 4 }} />
-                        </ComposedChart>
-                      </ResponsiveContainer>
-                    </div>
-                  )}
-
-                  <div className="ui-widget-card scrollable-list" style={{ maxHeight: '250px' }}>
-                    <h3 className="card-heading-clean">☀️ Historikus Napelem & Áram Referenciák</h3>
-                    <div className="modern-data-table-stack">
-                      {benchmarks.map((bm: any) => {
-                        const totalCons = parseFloat(bm.total_consumed_kwh || 0);
-                        const gridKwh = parseFloat(bm.grid_kwh || 0);
-                        const savedKwh = Math.max(0, totalCons - gridKwh);
-
-                        return (
-                          <div key={bm.id || bm.month} className="table-row-card" style={{ padding: '8px 12px' }}>
-                            <div>
-                              <div style={{ fontWeight: 700, fontSize: '0.9rem' }}>{bm.month}</div>
-                              <div style={{ fontSize: '0.75rem', color: '#64748b' }}>
-                                Benzin: {bm.gasoline_price} Ft/l • Fogyasztás: {totalCons} kWh (Hálózat: {gridKwh} kWh)
-                              </div>
-                            </div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                              <div style={{ textAlign: 'right' }}>
-                                <div style={{ fontWeight: 700, fontSize: '0.85rem' }} className="font-emerald">Megspórolt: {savedKwh.toFixed(1)} kWh</div>
-                                <div style={{ fontSize: '0.75rem', color: '#64748b' }}>Termelt: {bm.solar_kwh || 0} kWh</div>
-                              </div>
-                              {!isReadOnly && (
-                                <div className="row-buttons-trigger">
-                                  <button onClick={() => handleEditBenchmark(bm)}>✏️</button>
-                                  <button onClick={async () => { if(window.confirm(`Biztosan törlöd a ${bm.month} havi referenciát?`)) { await fetch(`${BACKEND_URL}/api/benchmarks/${bm.id}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${user.token}` } }); fetchAll(user.token); } }}>❌</button>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })}
-                      {benchmarks.length === 0 && <div className="empty-state-text">Még nincs rögzített havi referencia.</div>}
-                    </div>
-                  </div>
-
-                  <div className="dashboard-layout-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
-                    
-                    <div className="ui-widget-card">
-                      <h3 className="card-heading-clean">🎯 Töltőhelyek Megoszlása (kWh)</h3>
-                      <ResponsiveContainer width="100%" height={220}>
-                        <PieChart>
-                          <Pie data={roiMetrics.locationPieData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={70} label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}>
-                            {roiMetrics.locationPieData.map((_, idx) => (
-                              <Cell key={`cell-${idx}`} fill={PIE_COLORS[idx % PIE_COLORS.length]} />
-                            ))}
-                          </Pie>
-                          <Tooltip formatter={(val) => `${val} kWh`} />
-                        </PieChart>
-                      </ResponsiveContainer>
-                    </div>
-
-                    <div className="ui-widget-card scrollable-list" style={{ maxHeight: '280px' }}>
-                      <h3 className="card-heading-clean">📜 Töltési Napló (Szerkeszthető)</h3>
-                      <div className="modern-data-table-stack">
-                        {evLogs.map((log: any) => (
-                          <div key={log.id} className="table-row-card" style={{ padding: '8px 12px' }}>
-                            <div>
-                              <div style={{ fontWeight: 700, fontSize: '0.85rem' }}>{log.location} ({log.charge_source})</div>
-                              <div style={{ fontSize: '0.75rem', color: '#64748b' }}>
-                                {String(log.date).substring(0, 10)} 
-                                {log.start_soc !== null && log.end_soc !== null ? ` • ${log.start_soc}% ➔ ${log.end_soc}%` : ''} 
-                                {log.driven_km ? ` • ${log.driven_km} km` : ''}
-                              </div>
-                            </div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                              <div style={{ textAlign: 'right' }}>
-                                <div style={{ fontWeight: 700, fontSize: '0.85rem' }} className="font-emerald">{log.kwh_amount} kWh</div>
-                                <div style={{ fontSize: '0.75rem', color: '#64748b' }}>{parseFloat(log.cost_huf).toLocaleString()} Ft</div>
-                              </div>
-                              {!isReadOnly && (
-                                <div className="row-buttons-trigger">
-                                  <button onClick={() => handleEditEvLog(log)}>✏️</button>
-                                  <button onClick={async () => { if(window.confirm("Biztosan törlöd a töltést?")) { await fetch(`${BACKEND_URL}/api/ev-logs/${log.id}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${user.token}` } }); fetchAll(user.token); } }}>❌</button>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                  </div>
-
-                </section>
-              </div>
+                  </section>
+                </div>
+              ) : (
+                <div className="ui-widget-card" style={{ padding: '50px 20px', textAlign: 'center' }}>
+                  <span style={{ fontSize: '3rem' }}>⚡</span>
+                  <h3 style={{ marginTop: '10px' }}>Nincs elérhető eszköz</h3>
+                  <p style={{ color: 'var(--text-muted)', maxWidth: '500px', margin: '10px auto 0 auto' }}>
+                    A megtérülési és EV töltési adatok követéséhez hozz létre egy eszközt (ingatlant vagy járművet) a <b>Beállítások</b> fülön!
+                  </p>
+                </div>
+              )
             )}
 
             {/* ================= TAB 4: TRANZAKCIÓK ================= */}
