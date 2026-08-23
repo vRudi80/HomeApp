@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { 
   BarChart, Bar, XAxis, YAxis, 
   CartesianGrid, Tooltip, ResponsiveContainer, Legend,
-  PieChart, Pie, Cell 
+  PieChart, Pie, Cell, LineChart, Line, ComposedChart
 } from 'recharts';
 import { GoogleOAuthProvider, GoogleLogin, googleLogout } from '@react-oauth/google';
 import { jwtDecode } from "jwt-decode";
@@ -14,8 +14,14 @@ const PIE_COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6'];
 
 const ADMIN_EMAILS = ['kovari.rudolf@gmail.com'];
 
-// PONTOS EXCEL KÉPLET ALAPJÁN SZÁMOLÓ SEGÉDFÜGGVÉNY:
-// =if(N5<210; (N5-O5)*P5*-1; ((210*P5)+((N5-O5)-210)*Q5)*-1)
+function calculateTieredPowerCost(kwh: number, priceLow = 36, priceHigh = 70.1, limit = 210): number {
+  if (kwh <= 0) return 0;
+  if (kwh <= limit) {
+    return kwh * priceLow;
+  }
+  return (limit * priceLow) + ((kwh - limit) * priceHigh);
+}
+
 function calculateExcelSolarSavings(totalCons: number, gridKwh: number, priceLow = 36, priceHigh = 70.1): number {
   const savedKwh = Math.max(0, totalCons - gridKwh);
   if (savedKwh <= 0) return 0;
@@ -31,7 +37,6 @@ function calculateExcelSolarSavings(totalCons: number, gridKwh: number, priceLow
 }
 
 function App() {
-  // --- 1. SZEKCIÓ: ÁLLAPOTOK DEKLARÁCIÓJA ---
   const [user, setUser] = useState<any>(null);
   const [records, setRecords] = useState<any[]>([]);
   const [invoices, setInvoices] = useState<any[]>([]);
@@ -79,7 +84,6 @@ function App() {
 
   const [assetCategoryMap, setAssetCategoryMap] = useState<{ [key: string]: string[] }>({});
 
-  // EV ÉS NAPELEM STATE-EK
   const [evLogs, setEvLogs] = useState<any[]>([]);
   const [benchmarks, setBenchmarks] = useState<any[]>([]);
   const [editingEvLogId, setEditingEvLogId] = useState<number | null>(null);
@@ -112,7 +116,6 @@ function App() {
   const isReadOnly = viewingUserId !== null && viewingUserId !== user?.sub;
   const isAdmin = user && ADMIN_EMAILS.includes(user.email);
 
-  // --- 2. SZEKCIÓ: ALAPFÜGGVÉNYEK ---
   function forceLogout() {
     googleLogout();
     setUser(null);
@@ -301,7 +304,6 @@ function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
-  // --- 3. SZEKCIÓ: ADATMÓDOSÍTÓ METÓDUSOK ---
   async function handleSave() {
     if (!targetAssetId || targetAssetId === 'all' || !value) return alert("Hiányzó adatok!");
     const currentCat = categories.find(c => c.Name === type);
@@ -468,7 +470,6 @@ function App() {
     if (res.ok) fetchMyShares(user.token);
   }
 
-  // --- 4. SZEKCIÓ: AUTOMATIKUS EFFEKTEK ---
   useEffect(() => {
     const savedToken = localStorage.getItem('userToken');
     if (savedToken) handleLoginSuccess(savedToken);
@@ -556,7 +557,50 @@ function App() {
     return Array.from(set);
   }, [evLogs]);
 
-  // --- 5. SZEKCIÓ: EXCEL PONTOS DÍJSZÁMÍTÓ MEGTÉRÜLÉSI MOTOR ---
+  // --- ÚJ GRAFIKON ADATOK GENERÁLÁSA ---
+  // 1. Havi Napelem Termelés vs Össz Fogyasztás vs Hálózat
+  const solarEnergyBalanceData = useMemo(() => {
+    return benchmarks.slice().sort((a, b) => a.month.localeCompare(b.month)).map(bm => {
+      const totalCons = parseFloat(bm.total_consumed_kwh || 0);
+      const gridKwh = parseFloat(bm.grid_kwh || 0);
+      const solarKwh = parseFloat(bm.solar_kwh || 0);
+      const selfConsumedSolar = Math.max(0, totalCons - gridKwh);
+
+      return {
+        month: bm.month,
+        solar: solarKwh,
+        consumed: totalCons,
+        grid: gridKwh,
+        selfConsumed: selfConsumedSolar
+      };
+    });
+  }, [benchmarks]);
+
+  // 2. EV Havi Átlagfogyasztás (kWh/100km) & Km Költség (Ft/km) Trend
+  const evEfficiencyData = useMemo(() => {
+    const map: { [month: string]: { kwh: number; km: number; cost: number } } = {};
+    evLogs.forEach(log => {
+      const m = String(log.date).substring(0, 7);
+      if (!map[m]) map[m] = { kwh: 0, km: 0, cost: 0 };
+      map[m].kwh += parseFloat(log.kwh_amount || 0);
+      map[m].km += parseInt(log.driven_km || 0);
+      map[m].cost += parseFloat(log.cost_huf || 0);
+    });
+
+    return Object.keys(map).sort().map(m => {
+      const d = map[m];
+      const avgKwh100Km = d.km > 0 ? (d.kwh / d.km) * 100 : 0;
+      const avgFtKm = d.km > 0 ? d.cost / d.km : 0;
+      return {
+        month: m,
+        kwh100km: parseFloat(avgKwh100Km.toFixed(1)),
+        ftKm: parseFloat(avgFtKm.toFixed(1)),
+        totalKm: d.km
+      };
+    }).filter(d => d.totalKm > 0 || d.kwh100km > 0);
+  }, [evLogs]);
+
+  // EXCEL PONTOS DÍJSZÁMÍTÓ MEGTÉRÜLÉSI MOTOR
   const roiMetrics = useMemo(() => {
     let totalKwh = 0;
     let totalPaidHuf = 0;
@@ -591,7 +635,6 @@ function App() {
       market_kwh_price: 70.1
     };
 
-    // 1. AUTÓ MEGTARÍTÁS
     let totalGasolineEquivalentHuf = 0;
     evLogs.forEach(log => {
       const logMonth = String(log.date).substring(0, 7);
@@ -606,7 +649,6 @@ function App() {
 
     const evSavingsHuf = totalGasolineEquivalentHuf - totalPaidHuf;
 
-    // 2. NAPELEM ÁRAM MEGTARÍTÁS (PONTOS EXCEL KÉPLET ALAPJÁN!)
     let solarHouseholdSavingsHuf = 0;
     benchmarks.forEach(bm => {
       const totalCons = parseFloat(bm.total_consumed_kwh || 0);
@@ -619,12 +661,10 @@ function App() {
       }
     });
 
-    // 3. ÖSSZES MEGTARÍTÁS ÉS MEGTÉRÜLÉS
     const totalSavingsHuf = evSavingsHuf + solarHouseholdSavingsHuf;
     const totalInvestment = parseFloat(latestBm.solar_investment || 0) + parseFloat(latestBm.ev_investment || 0);
     const currentBalance = totalSavingsHuf - totalInvestment;
 
-    // 4. ELTELT NAPOK ÉS VÁRHATÓ MEGTÉRÜLÉSI DÁTUM
     const firstDate = evLogs.length > 0 ? new Date(evLogs[evLogs.length - 1].date) : new Date();
     const elapsedDays = Math.max(1, Math.round((new Date().getTime() - firstDate.getTime()) / (1000 * 60 * 60 * 24)));
     
@@ -663,7 +703,6 @@ function App() {
     };
   }, [evLogs, benchmarks]);
 
-  // --- 6. SZEKCIÓ: MŰSZERFAL GRAFIKON MOTOR ---
   const chartData = useMemo(() => {
     const dataMap: { [key: string]: any } = {};
     const fRec = records.filter((r: any) => selectedAssetId === 'all' || String(r.AssetId) === String(selectedAssetId));
@@ -1191,6 +1230,42 @@ function App() {
                       <span>Hátralévő napok: {roiMetrics.remainingDays} nap</span>
                     </div>
                   </div>
+
+                  {/* ÚJ GRAFIKON 1: ENERGIA MÉRLEG (TERMELTS vs FOGYASZTOTT vs HÁLÓZAT) */}
+                  <div className="ui-widget-card">
+                    <h3 className="card-heading-clean">☀️ Havi Energia Mérleg (kWh)</h3>
+                    <ResponsiveContainer width="100%" height={240}>
+                      <BarChart data={solarEnergyBalanceData} margin={{ top: 10, right: 15, left: 10, bottom: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                        <XAxis dataKey="month" fontSize={11} stroke="#64748b" tickLine={false} />
+                        <YAxis fontSize={11} stroke="#64748b" tickLine={false} axisLine={false} width={45} />
+                        <Tooltip />
+                        <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
+                        <Bar dataKey="consumed" name="Összes Fogyasztás" fill="#3b82f6" radius={[3,3,0,0]} />
+                        <Bar dataKey="solar" name="Napelem Termelés" fill="#10b981" radius={[3,3,0,0]} />
+                        <Bar dataKey="grid" name="Hálózati Vételezés" fill="#ef4444" radius={[3,3,0,0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+
+                  {/* ÚJ GRAFIKON 2: AUTÓ HATÉKONYSÁGI TREND (kWh/100km & Ft/km) */}
+                  {evEfficiencyData.length > 0 && (
+                    <div className="ui-widget-card">
+                      <h3 className="card-heading-clean">🚗 Autó Fogyasztási & Km-Költség Trend</h3>
+                      <ResponsiveContainer width="100%" height={220}>
+                        <ComposedChart data={evEfficiencyData} margin={{ top: 10, right: 15, left: 10, bottom: 0 }}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                          <XAxis dataKey="month" fontSize={11} stroke="#64748b" tickLine={false} />
+                          <YAxis yAxisId="left" fontSize={11} stroke="#8b5cf6" tickLine={false} axisLine={false} width={45} label={{ value: 'kWh/100km', angle: -90, position: 'insideLeft', style: { fontSize: '10px', fill: '#8b5cf6' } }} />
+                          <YAxis yAxisId="right" orientation="right" fontSize={11} stroke="#10b981" tickLine={false} axisLine={false} width={45} label={{ value: 'Ft/km', angle: 90, position: 'insideRight', style: { fontSize: '10px', fill: '#10b981' } }} />
+                          <Tooltip />
+                          <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
+                          <Bar yAxisId="left" dataKey="kwh100km" name="Fogyasztás (kWh/100km)" fill="#8b5cf6" radius={[3,3,0,0]} />
+                          <Line yAxisId="right" type="monotone" dataKey="ftKm" name="Költség (Ft/km)" stroke="#10b981" strokeWidth={3} dot={{ r: 4 }} />
+                        </ComposedChart>
+                      </ResponsiveContainer>
+                    </div>
+                  )}
 
                   {/* HISTORIKUS NAPELEM ÉS HÁLÓZATI ÁRAM TÁBLÁZAT */}
                   <div className="ui-widget-card scrollable-list" style={{ maxHeight: '250px' }}>
