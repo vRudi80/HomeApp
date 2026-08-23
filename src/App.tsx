@@ -47,7 +47,8 @@ function App() {
   const [viewingUserId, setViewingUserId] = useState<string | null>(null);
   const [selectedAssetId, setSelectedAssetId] = useState<string>('all');
   
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'transactions' | 'settings' | 'ev-solar'>('dashboard');
+  // NAVIGÁCIÓS FÜLEK
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'transactions' | 'settings' | 'ev-solar' | 'rental'>('dashboard');
   
   const [txSearch, setTxSearch] = useState('');
   const [txAssetFilter, setTxAssetFilter] = useState('all');
@@ -113,6 +114,25 @@ function App() {
     ev_investment: '0'
   });
 
+  // ALBÉRLET STATE-EK
+  const [rentalContracts, setRentalContracts] = useState<any[]>([]);
+  const [rentalPayments, setRentalPayments] = useState<any[]>([]);
+  const [selectedRentalAssetId, setSelectedRentalAssetId] = useState<string>('');
+
+  const [rentalContractForm, setRentalContractForm] = useState({
+    tenantEmail: '',
+    monthlyRent: '120000',
+    depositAmount: '240000'
+  });
+
+  const [rentalPaymentForm, setRentalPaymentForm] = useState({
+    month: new Date().toISOString().substring(0, 7),
+    rentPaid: '120000',
+    utilitiesPaid: '0',
+    paymentDate: new Date().toISOString().split('T')[0],
+    notes: 'Rendes havi utalás'
+  });
+
   const isReadOnly = viewingUserId !== null && viewingUserId !== user?.sub;
   const isAdmin = user && ADMIN_EMAILS.includes(user.email);
 
@@ -121,6 +141,7 @@ function App() {
     setUser(null);
     setRecords([]); setInvoices([]); setAssets([]); setCategories([]);
     setSharedUsers([]); setMyShares([]); setEvLogs([]); setBenchmarks([]);
+    setRentalContracts([]); setRentalPayments([]);
     localStorage.removeItem('userToken');
   }
 
@@ -229,25 +250,31 @@ function App() {
     if (!id || !token) return;
     try {
       const headers = { 'Authorization': `Bearer ${token}` };
-      const [recRes, invRes, assetRes, catRes, acRes, evRes, bmRes] = await Promise.all([
+      const [recRes, invRes, assetRes, catRes, acRes, evRes, bmRes, rentConRes] = await Promise.all([
         fetch(`${BACKEND_URL}/api/records?userId=${id}`, { headers }),
         fetch(`${BACKEND_URL}/api/invoices?userId=${id}`, { headers }),
         fetch(`${BACKEND_URL}/api/assets?userId=${id}`, { headers }),
         fetch(`${BACKEND_URL}/api/categories?userId=${id}`, { headers }),
         fetch(`${BACKEND_URL}/api/asset-categories?userId=${id}`, { headers }),
         fetch(`${BACKEND_URL}/api/ev-logs?userId=${id}`, { headers }),
-        fetch(`${BACKEND_URL}/api/benchmarks?userId=${id}`, { headers })
+        fetch(`${BACKEND_URL}/api/benchmarks?userId=${id}`, { headers }),
+        fetch(`${BACKEND_URL}/api/rentals/contracts`, { headers })
       ]);
       if (recRes.status === 401) return forceLogout();
       
       setRecords(recRes.ok ? await recRes.json() : []);
       setInvoices(invRes.ok ? await invRes.json() : []);
-      setAssets(assetRes.ok ? await assetRes.json() : []);
+      
+      const loadedAssets = assetRes.ok ? await assetRes.json() : [];
+      setAssets(loadedAssets);
+      if (loadedAssets.length > 0 && !selectedRentalAssetId) {
+        setSelectedRentalAssetId(String(loadedAssets[0].Id));
+      }
+
       setCategories(catRes.ok ? await catRes.json() : []);
       setEvLogs(evRes.ok ? await evRes.json() : []);
-      
-      const fetchedBm = bmRes.ok ? await bmRes.json() : [];
-      setBenchmarks(fetchedBm);
+      setBenchmarks(bmRes.ok ? await bmRes.json() : []);
+      setRentalContracts(rentConRes.ok ? await rentConRes.json() : []);
 
       const acData = acRes.ok ? await acRes.json() : [];
       if (Array.isArray(acData)) {
@@ -261,6 +288,18 @@ function App() {
       }
     } catch (err) { console.error(err); }
   }
+
+  // ALBÉRLET BEFIZETÉSEK LEKÉRÉSE ESZKÖZ VÁLTÁSKOR
+  useEffect(() => {
+    if (selectedRentalAssetId && user?.token) {
+      fetch(`${BACKEND_URL}/api/rentals/payments?assetId=${selectedRentalAssetId}`, {
+        headers: { 'Authorization': `Bearer ${user.token}` }
+      })
+      .then(res => res.json())
+      .then(data => setRentalPayments(Array.isArray(data) ? data : []))
+      .catch(err => console.error(err));
+    }
+  }, [selectedRentalAssetId, user]);
 
   function handleBenchmarkMonthChange(newMonth: string) {
     const existing = benchmarks.find(b => b.month === newMonth);
@@ -302,6 +341,45 @@ function App() {
       ev_investment: String(bm.ev_investment ?? '0')
     });
     window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  // --- ALBÉRLETI METÓDUSOK ---
+  async function handleSaveRentalContract() {
+    if (!selectedRentalAssetId) return alert("Válassz ingatlant!");
+    const res = await fetch(`${BACKEND_URL}/api/rentals/contracts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${user.token}` },
+      body: JSON.stringify({
+        assetId: parseInt(selectedRentalAssetId),
+        tenantEmail: rentalContractForm.tenantEmail,
+        monthlyRent: parseFloat(rentalContractForm.monthlyRent),
+        depositAmount: parseFloat(rentalContractForm.depositAmount)
+      })
+    });
+    if (res.ok) fetchAll(user.token, viewingUserId!);
+  }
+
+  async function handleSaveRentalPayment() {
+    if (!selectedRentalAssetId) return alert("Válassz ingatlant!");
+    const res = await fetch(`${BACKEND_URL}/api/rentals/payments`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${user.token}` },
+      body: JSON.stringify({
+        assetId: parseInt(selectedRentalAssetId),
+        month: rentalPaymentForm.month,
+        rentPaid: parseFloat(rentalPaymentForm.rentPaid || '0'),
+        utilitiesPaid: parseFloat(rentalPaymentForm.utilitiesPaid || '0'),
+        paymentDate: rentalPaymentForm.paymentDate,
+        notes: rentalPaymentForm.notes
+      })
+    });
+    if (res.ok) {
+      // Re-fetch payments
+      const pRes = await fetch(`${BACKEND_URL}/api/rentals/payments?assetId=${selectedRentalAssetId}`, {
+        headers: { 'Authorization': `Bearer ${user.token}` }
+      });
+      setRentalPayments(await pRes.json());
+    }
   }
 
   async function handleSave() {
@@ -470,399 +548,63 @@ function App() {
     if (res.ok) fetchMyShares(user.token);
   }
 
-  useEffect(() => {
-    const savedToken = localStorage.getItem('userToken');
-    if (savedToken) handleLoginSuccess(savedToken);
-  }, []);
+  // --- ALBÉRLET ELSZÁMOLÁSI CALCULATOR ---
+  const rentalCalculation = useMemo(() => {
+    if (!selectedRentalAssetId) return null;
+    const contract = rentalContracts.find(c => String(c.asset_id) === selectedRentalAssetId);
 
-  useEffect(() => {
-    if (assets.length > 0 && !matrixSelectedAssetId) {
-      setMatrixSelectedAssetId(String(assets[0].Id));
-    }
-  }, [assets]);
+    // Számlák alapján kiszámolt havi rezsi a kiválasztott ingatlanra
+    const propertyInvoices = invoices.filter(i => String(i.AssetId) === selectedRentalAssetId);
+    
+    // Hónapok szerinti csoportosítás
+    const monthlySummaryMap: { [month: string]: { utilitiesCost: number; rentCost: number; rentPaid: number; utilitiesPaid: number } } = {};
 
-  useEffect(() => {
-    const allowed = getAllowedTypes(targetAssetId);
-    if (allowed.length > 0) {
-      if (!type || !allowed.includes(type)) {
-        setType(allowed[0]);
-      }
-    } else {
-      setType('');
-    }
-  }, [targetAssetId, assets, categories, assetCategoryMap]);
-
-  useEffect(() => {
-    const asset = assets.find(a => String(a.Id) === String(targetAssetId));
-    const currentCat = categories.find(c => c.Name === type);
-    if (asset?.Category === 'car' || currentCat?.Type === 'invoice_only' || currentCat?.Type === 'income') {
-      setRecordMode('invoice');
-    }
-  }, [targetAssetId, type, assets, categories]);
-
-  const isMeterDisabled = useMemo(() => {
-    const asset = assets.find(a => String(a.Id) === String(targetAssetId));
-    const currentCat = categories.find(c => c.Name === type);
-    return asset?.Category === 'car' || currentCat?.Type === 'invoice_only' || currentCat?.Type === 'income';
-  }, [targetAssetId, type, assets, categories]);
-
-  const visibleCategories = useMemo(() => {
-    const allowedNames = getAllowedTypes(selectedAssetId);
-    return categories.filter(c => allowedNames.includes(c.Name));
-  }, [categories, selectedAssetId, assetCategoryMap]);
-
-  const combinedList = useMemo(() => {
-    const safeRecords = Array.isArray(records) ? records : [];
-    const safeInvoices = Array.isArray(invoices) ? invoices : [];
-
-    const formattedRecords = safeRecords.map(r => ({
-      ...r,
-      lType: 'meter',
-      d: r.FormattedDate || r.Date
-    }));
-
-    const formattedInvoices = safeInvoices.map(i => ({
-      ...i,
-      lType: 'invoice',
-      Value: i.Amount,
-      d: i.Month
-    }));
-
-    return [...formattedRecords, ...formattedInvoices].sort(
-      (a, b) => new Date(b.d).getTime() - new Date(a.d).getTime()
-    );
-  }, [records, invoices]);
-
-  const filteredCombinedList = useMemo(() => {
-    return combinedList.filter((item: any) => {
-      const asset = assets.find(a => String(a.Id) === String(item.AssetId));
-      const assetName = asset ? asset.FriendlyName.toLowerCase() : '';
-      const itemType = item.Type ? item.Type.toLowerCase() : '';
-      
-      const searchMatch = 
-        itemType.includes(txSearch.toLowerCase()) || 
-        assetName.includes(txSearch.toLowerCase()) || 
-        String(item.Value).includes(txSearch);
-        
-      const assetMatch = txAssetFilter === 'all' || String(item.AssetId) === txAssetFilter;
-      const categoryMatch = txCategoryFilter === 'all' || item.Type === txCategoryFilter;
-      
-      return searchMatch && assetMatch && categoryMatch;
-    });
-  }, [combinedList, txSearch, txAssetFilter, txCategoryFilter, assets]);
-
-  const uniqueLocations = useMemo(() => {
-    const set = new Set<string>(['Napelem', 'Otthon', 'Tesla Supercharger', 'Ionity', 'Tea', 'Garázs Tondo']);
-    evLogs.forEach(log => { if (log.location) set.add(log.location); });
-    return Array.from(set);
-  }, [evLogs]);
-
-  // --- ÚJ GRAFIKON ADATOK GENERÁLÁSA ---
-  // 1. Havi Napelem Termelés vs Össz Fogyasztás vs Hálózat
-  const solarEnergyBalanceData = useMemo(() => {
-    return benchmarks.slice().sort((a, b) => a.month.localeCompare(b.month)).map(bm => {
-      const totalCons = parseFloat(bm.total_consumed_kwh || 0);
-      const gridKwh = parseFloat(bm.grid_kwh || 0);
-      const solarKwh = parseFloat(bm.solar_kwh || 0);
-      const selfConsumedSolar = Math.max(0, totalCons - gridKwh);
-
-      return {
-        month: bm.month,
-        solar: solarKwh,
-        consumed: totalCons,
-        grid: gridKwh,
-        selfConsumed: selfConsumedSolar
-      };
-    });
-  }, [benchmarks]);
-
-  // 2. EV Havi Átlagfogyasztás (kWh/100km) & Km Költség (Ft/km) Trend
-  const evEfficiencyData = useMemo(() => {
-    const map: { [month: string]: { kwh: number; km: number; cost: number } } = {};
-    evLogs.forEach(log => {
-      const m = String(log.date).substring(0, 7);
-      if (!map[m]) map[m] = { kwh: 0, km: 0, cost: 0 };
-      map[m].kwh += parseFloat(log.kwh_amount || 0);
-      map[m].km += parseInt(log.driven_km || 0);
-      map[m].cost += parseFloat(log.cost_huf || 0);
+    propertyInvoices.forEach(inv => {
+      const m = String(inv.Month).substring(0, 7);
+      if (!monthlySummaryMap[m]) monthlySummaryMap[m] = { utilitiesCost: 0, rentCost: contract ? parseFloat(contract.monthly_rent) : 120000, rentPaid: 0, utilitiesPaid: 0 };
+      monthlySummaryMap[m].utilitiesCost += parseFloat(inv.Amount || 0);
     });
 
-    return Object.keys(map).sort().map(m => {
-      const d = map[m];
-      const avgKwh100Km = d.km > 0 ? (d.kwh / d.km) * 100 : 0;
-      const avgFtKm = d.km > 0 ? d.cost / d.km : 0;
+    rentalPayments.forEach(pay => {
+      const m = pay.month;
+      if (!monthlySummaryMap[m]) monthlySummaryMap[m] = { utilitiesCost: 0, rentCost: contract ? parseFloat(contract.monthly_rent) : 120000, rentPaid: 0, utilitiesPaid: 0 };
+      monthlySummaryMap[m].rentPaid += parseFloat(pay.rent_paid || 0);
+      monthlySummaryMap[m].utilitiesPaid += parseFloat(pay.utilities_paid || 0);
+    });
+
+    // Göngyölített egyenleg kiszámítása
+    let totalDue = 0;
+    let totalPaid = 0;
+
+    const monthlyBreakdown = Object.keys(monthlySummaryMap).sort().reverse().map(m => {
+      const d = monthlySummaryMap[m];
+      const monthDue = d.utilitiesCost + d.rentCost;
+      const monthPaid = d.rentPaid + d.utilitiesPaid;
+      const diff = monthPaid - monthDue;
+
+      totalDue += monthDue;
+      totalPaid += monthPaid;
+
       return {
         month: m,
-        kwh100km: parseFloat(avgKwh100Km.toFixed(1)),
-        ftKm: parseFloat(avgFtKm.toFixed(1)),
-        totalKm: d.km
+        utilitiesCost: d.utilitiesCost,
+        rentCost: d.rentCost,
+        monthDue,
+        monthPaid,
+        diff
       };
-    }).filter(d => d.totalKm > 0 || d.kwh100km > 0);
-  }, [evLogs]);
-
-  // EXCEL PONTOS DÍJSZÁMÍTÓ MEGTÉRÜLÉSI MOTOR
-  const roiMetrics = useMemo(() => {
-    let totalKwh = 0;
-    let totalPaidHuf = 0;
-    let totalKm = 0;
-    let solarKwh = 0;
-
-    const locationBreakdown: { [loc: string]: number } = {};
-
-    evLogs.forEach(log => {
-      const kwh = parseFloat(log.kwh_amount || 0);
-      const huf = parseFloat(log.cost_huf || 0);
-      const km = parseInt(log.driven_km || 0);
-
-      totalKwh += kwh;
-      totalPaidHuf += huf;
-      totalKm += km;
-
-      if (log.charge_source === 'Napelem') {
-        solarKwh += kwh;
-      }
-
-      const loc = log.location || 'Egyéb';
-      locationBreakdown[loc] = (locationBreakdown[loc] || 0) + kwh;
     });
 
-    const latestBm = benchmarks[0] || {
-      gasoline_price: 595,
-      avg_consumption: 5.95,
-      solar_investment: 1950400,
-      ev_investment: 0,
-      grid_kwh_price: 36,
-      market_kwh_price: 70.1
-    };
-
-    let totalGasolineEquivalentHuf = 0;
-    evLogs.forEach(log => {
-      const logMonth = String(log.date).substring(0, 7);
-      const bm = benchmarks.find(b => b.month === logMonth) || latestBm;
-      const km = parseInt(log.driven_km || 0);
-      
-      if (km > 0) {
-        const gasCostPerKm = (parseFloat(bm.avg_consumption) / 100) * parseFloat(bm.gasoline_price);
-        totalGasolineEquivalentHuf += km * gasCostPerKm;
-      }
-    });
-
-    const evSavingsHuf = totalGasolineEquivalentHuf - totalPaidHuf;
-
-    let solarHouseholdSavingsHuf = 0;
-    benchmarks.forEach(bm => {
-      const totalCons = parseFloat(bm.total_consumed_kwh || 0);
-      const gridKwh = parseFloat(bm.grid_kwh || 0);
-      const lowPrice = parseFloat(bm.grid_kwh_price || 36);
-      const highPrice = parseFloat(bm.market_kwh_price || 70.1);
-
-      if (totalCons > 0) {
-        solarHouseholdSavingsHuf += calculateExcelSolarSavings(totalCons, gridKwh, lowPrice, highPrice);
-      }
-    });
-
-    const totalSavingsHuf = evSavingsHuf + solarHouseholdSavingsHuf;
-    const totalInvestment = parseFloat(latestBm.solar_investment || 0) + parseFloat(latestBm.ev_investment || 0);
-    const currentBalance = totalSavingsHuf - totalInvestment;
-
-    const firstDate = evLogs.length > 0 ? new Date(evLogs[evLogs.length - 1].date) : new Date();
-    const elapsedDays = Math.max(1, Math.round((new Date().getTime() - firstDate.getTime()) / (1000 * 60 * 60 * 24)));
-    
-    const dailySavingsHuf = totalSavingsHuf / elapsedDays;
-    const remainingHuf = Math.max(0, totalInvestment - totalSavingsHuf);
-    const remainingDays = dailySavingsHuf > 0 ? Math.round(remainingHuf / dailySavingsHuf) : 0;
-
-    const estimatedPaybackDate = new Date();
-    estimatedPaybackDate.setDate(estimatedPaybackDate.getDate() + remainingDays);
-
-    const greenRatio = totalKwh > 0 ? (solarKwh / totalKwh) * 100 : 0;
-    const costPerKm = totalKm > 0 ? totalPaidHuf / totalKm : 0;
-
-    const locationPieData = Object.keys(locationBreakdown).map(loc => ({
-      name: loc,
-      value: Math.round(locationBreakdown[loc])
-    }));
+    const totalBalance = totalPaid - totalDue;
 
     return {
-      totalKwh,
-      totalPaidHuf,
-      totalKm,
-      solarKwh,
-      greenRatio,
-      costPerKm,
-      evSavingsHuf,
-      solarHouseholdSavingsHuf,
-      totalSavingsHuf,
-      totalInvestment,
-      currentBalance,
-      elapsedDays,
-      dailySavingsHuf,
-      remainingDays,
-      estimatedPaybackDate: estimatedPaybackDate.toISOString().substring(0, 10),
-      locationPieData
+      contract,
+      monthlyBreakdown,
+      totalDue,
+      totalPaid,
+      totalBalance
     };
-  }, [evLogs, benchmarks]);
-
-  const chartData = useMemo(() => {
-    const dataMap: { [key: string]: any } = {};
-    const fRec = records.filter((r: any) => selectedAssetId === 'all' || String(r.AssetId) === String(selectedAssetId));
-    const fInv = invoices.filter((i: any) => selectedAssetId === 'all' || String(i.AssetId) === String(selectedAssetId));
-
-    const isAll = filter.includes('Összes');
-    const isAllExpense = filter.includes('Összes kiadás');
-
-    if (displayMode === 'usage') {
-      const assetTypeGroupMap: { [key: string]: { [catType: string]: any[] } } = {};
-      
-      fRec.filter((r: any) => (isAll || isAllExpense ? true : filter.includes(r.Type))).forEach((r: any) => {
-        if (!assetTypeGroupMap[r.AssetId]) assetTypeGroupMap[r.AssetId] = {};
-        if (!assetTypeGroupMap[r.AssetId][r.Type]) assetTypeGroupMap[r.AssetId][r.Type] = [];
-        assetTypeGroupMap[r.AssetId][r.Type].push(r);
-      });
-
-      Object.keys(assetTypeGroupMap).forEach(assetId => {
-        Object.keys(assetTypeGroupMap[assetId]).forEach(catType => {
-          const sortedRecords = assetTypeGroupMap[assetId][catType].sort((a: any, b: any) => new Date(a.FormattedDate).getTime() - new Date(b.FormattedDate).getTime());
-          
-          const firstReadingPerMonth: { [key: string]: number } = {};
-          sortedRecords.forEach((r: any) => {
-            const monthKey = r.FormattedDate.substring(0, 7);
-            if (firstReadingPerMonth[monthKey] === undefined) {
-              firstReadingPerMonth[monthKey] = parseFloat(r.Value);
-            }
-          });
-
-          const months = Object.keys(firstReadingPerMonth).sort();
-
-          for (let i = 0; i < months.length - 1; i++) {
-            const currentMonth = months[i];
-            const nextMonth = months[i + 1];
-            
-            const v1 = firstReadingPerMonth[currentMonth];
-            const v2 = firstReadingPerMonth[nextMonth];
-            const diff = v2 - v1;
-
-            if (diff >= 0) {
-              const chartKey = viewMode === 'monthly' ? currentMonth : currentMonth.substring(0, 4);
-              const asset = assets.find(a => String(a.Id) === String(assetId));
-              const label = asset ? asset.FriendlyName : 'Egyéb';
-              
-              if (!dataMap[chartKey]) dataMap[chartKey] = { label: chartKey };
-              dataMap[chartKey][label] = (dataMap[chartKey][label] || 0) + diff;
-            }
-          }
-        });
-      });
-    } else {
-      const keyLen = viewMode === 'monthly' ? 7 : 4;
-      fInv.filter((inv: any) => {
-        if (isAll) return true;
-        if (isAllExpense) return categories.find(c => c.Name === inv.Type)?.Type !== 'income';
-        return filter.includes(inv.Type);
-      }).forEach((inv: any) => {
-        const key = String(inv.Month || "").substring(0, keyLen);
-        const asset = assets.find(a => String(a.Id) === String(inv.AssetId));
-        const label = asset ? asset.FriendlyName : 'Egyéb';
-        const isIncome = categories.find(c => c.Name === inv.Type)?.Type === 'income';
-        if (key && key.length >= 4) {
-          if (!dataMap[key]) dataMap[key] = { label: key };
-          if (isIncome) {
-            dataMap[key][`${label}_income`] = (dataMap[key][`${label}_income`] || 0) + parseFloat(inv.Amount || 0);
-          } else {
-            dataMap[key][label] = (dataMap[key][label] || 0) + parseFloat(inv.Amount || 0);
-          }
-        }
-      });
-    }
-    const sorted = Object.values(dataMap).sort((a: any, b: any) => a.label.localeCompare(b.label));
-    return chartRange === 'custom' 
-      ? sorted.filter((item: any) => item.label >= customStartDate && item.label <= customEndDate)
-      : (chartRange === 'all' ? sorted : sorted.slice(-chartRange));
-  }, [records, invoices, assets, filter, displayMode, viewMode, selectedAssetId, chartRange, customStartDate, customEndDate, categories]);
-
-  const renderCustomLegend = (props: any) => {
-    const { payload } = props;
-    if (!payload) return null;
-    const filteredPayload = payload.filter((entry: any) => !entry.dataKey || !entry.dataKey.endsWith('_income'));
-
-    return (
-      <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: '12px', paddingTop: '10px', fontSize: '11px' }}>
-        {filteredPayload.map((entry: any, index: number) => (
-          <div key={`legend-${index}`} style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-            <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: entry.color, display: 'inline-block' }} />
-            <span style={{ color: '#64748b', fontWeight: 600 }}>{entry.value}</span>
-          </div>
-        ))}
-      </div>
-    );
-  };
-
-  const CustomTooltip = ({ active, payload, label }: any) => {
-    if (active && payload && payload.length) {
-      const unit = displayMode === 'cost' ? 'Ft' : '';
-      if (displayMode === 'usage') {
-        const total = payload.reduce((sum: number, entry: any) => sum + (Number(entry.value) || 0), 0);
-        return (
-          <div className="custom-tooltip-box">
-            <p className="tooltip-title">{label}</p>
-            {payload.map((entry: any, index: number) => (
-              <div key={index} style={{ color: entry.color }} className="tooltip-row">
-                <span>{entry.name}:</span>
-                <span className="tooltip-val">{Number(entry.value).toLocaleString()} {unit}</span>
-              </div>
-            ))}
-            <div className="tooltip-total font-emerald">
-              <span>Összesen:</span><span>{total.toLocaleString()} {unit}</span>
-            </div>
-          </div>
-        );
-      }
-
-      const expenses = payload.filter((p: any) => !p.dataKey.endsWith('_income'));
-      const incomes = payload.filter((p: any) => p.dataKey.endsWith('_income'));
-      const totalExp = expenses.reduce((sum: number, p: any) => sum + Number(p.value), 0);
-      const totalInc = incomes.reduce((sum: number, p: any) => sum + Number(p.value), 0);
-      const netTotal = totalInc - totalExp;
-
-      return (
-        <div className="custom-tooltip-box">
-          <p className="tooltip-title">{label}</p>
-          {incomes.length > 0 && (
-            <div className="tooltip-section">
-              <div className="section-badge badge-income">Bevételek</div>
-              {incomes.map((entry: any, index: number) => (
-                <div key={`inc-${index}`} className="tooltip-row">
-                  <span style={{ color: entry.color }}>{entry.name.replace(' (Bevétel)', '')}:</span>
-                  <span className="font-emerald">+{Number(entry.value).toLocaleString()} {unit}</span>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {expenses.length > 0 && (
-            <div className="tooltip-section">
-              <div className="section-badge badge-expense">Kiadások</div>
-              {expenses.map((entry: any, index: number) => (
-                <div key={`exp-${index}`} className="tooltip-row">
-                  <span style={{ color: entry.color }}>{entry.name}:</span>
-                  <span>{Number(entry.value).toLocaleString()} {unit}</span>
-                </div>
-              ))}
-            </div>
-          )}
-          
-          <div className="tooltip-footer">
-            {totalExp > 0 && <div className="tooltip-row font-rose"><span>Össz. Kiadás:</span><span>-{totalExp.toLocaleString()} {unit}</span></div>}
-            {totalInc > 0 && <div className="tooltip-row font-emerald"><span>Össz. Bevétel:</span><span>+{totalInc.toLocaleString()} {unit}</span></div>}
-            <div className="tooltip-net" style={{ color: netTotal > 0 ? '#10b981' : (netTotal < 0 ? '#ef4444' : '#0f172a') }}>
-              <span>Egyenleg:</span><span>{netTotal > 0 ? '+' : ''}{netTotal.toLocaleString()} {unit}</span>
-            </div>
-          </div>
-        </div>
-      );
-    }
-    return null;
-  };
+  }, [selectedRentalAssetId, rentalContracts, invoices, rentalPayments]);
 
   return (
     <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
@@ -884,6 +626,7 @@ function App() {
           {user && (
             <nav className="header-navigation-tabs">
               <button className={`nav-tab-link ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveTab('dashboard')}>📊 Műszerfal</button>
+              <button className={`nav-tab-link ${activeTab === 'rental' ? 'active' : ''}`} onClick={() => setActiveTab('rental')}>🏠 Albérlet</button>
               <button className={`nav-tab-link ${activeTab === 'ev-solar' ? 'active' : ''}`} onClick={() => setActiveTab('ev-solar')}>⚡ Megtérülés & EV</button>
               <button className={`nav-tab-link ${activeTab === 'transactions' ? 'active' : ''}`} onClick={() => setActiveTab('transactions')}>📜 Tranzakciók</button>
               <button className={`nav-tab-link ${activeTab === 'settings' ? 'active' : ''}`} onClick={() => setActiveTab('settings')}>⚙️ Beállítások</button>
@@ -1057,11 +800,143 @@ function App() {
               </div>
             )}
 
-            {/* ================= TAB 2: MEGTÉRÜLÉS & EV TÖLTÉS ================= */}
+            {/* ================= TAB 2: ALBÉRLET KEZELÉS ================= */}
+            {activeTab === 'rental' && (
+              <div className="dashboard-layout-grid">
+                <aside className="sidebar-container">
+                  <div className="ui-widget-card">
+                    <label className="input-label-flat">Ingatlan Kiválasztása</label>
+                    <select className="form-control-select" value={selectedRentalAssetId} onChange={(e) => setSelectedRentalAssetId(e.target.value)}>
+                      {assets.filter(a => a.Category === 'property').map((a: any) => (
+                        <option key={a.Id} value={String(a.Id)}>🏠 {a.FriendlyName}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* ALBÉRLETI SZERZŐDÉS ÉS BÉRLŐ MEGOSZTÁS */}
+                  {!isReadOnly && (
+                    <div className="ui-widget-card">
+                      <h3 className="card-heading-clean">⚙️ Szerződés & Bérlő beállítása</h3>
+                      <div className="form-stack-vertical">
+                        <div>
+                          <label className="input-label-flat">Bérlő Google E-mail Címe</label>
+                          <input 
+                            type="email" 
+                            className="form-control-select" 
+                            placeholder="berlo@gmail.com" 
+                            value={rentalContractForm.tenantEmail} 
+                            onChange={(e) => setRentalContractForm({...rentalContractForm, tenantEmail: e.target.value})} 
+                          />
+                        </div>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <div style={{ flex: 1 }}>
+                            <label className="input-label-flat">Havi Bérleti Díj (Ft)</label>
+                            <input type="number" className="form-control-select" value={rentalContractForm.monthlyRent} onChange={(e) => setRentalContractForm({...rentalContractForm, monthlyRent: e.target.value})} />
+                          </div>
+                          <div style={{ flex: 1 }}>
+                            <label className="input-label-flat">Kaució (Ft)</label>
+                            <input type="number" className="form-control-select" value={rentalContractForm.depositAmount} onChange={(e) => setRentalContractForm({...rentalContractForm, depositAmount: e.target.value})} />
+                          </div>
+                        </div>
+                        <button className="btn-action-primary" onClick={handleSaveRentalContract}>Szerződés & Megosztás Mentése</button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ALBÉRLETI BEFIZETÉS RÖGZÍTÉSE */}
+                  {!isReadOnly && (
+                    <div className="ui-widget-card">
+                      <h3 className="card-heading-clean">💵 Befizetés Rögzítése</h3>
+                      <div className="form-stack-vertical">
+                        <div>
+                          <label className="input-label-flat">Elszámolási Hónap</label>
+                          <input type="month" className="form-control-select" value={rentalPaymentForm.month} onChange={(e) => setRentalPaymentForm({...rentalPaymentForm, month: e.target.value})} />
+                        </div>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <div style={{ flex: 1 }}>
+                            <label className="input-label-flat">Befizetett Bérleti Díj</label>
+                            <input type="number" className="form-control-select" value={rentalPaymentForm.rentPaid} onChange={(e) => setRentalPaymentForm({...rentalPaymentForm, rentPaid: e.target.value})} />
+                          </div>
+                          <div style={{ flex: 1 }}>
+                            <label className="input-label-flat">Befizetett Rezsi</label>
+                            <input type="number" className="form-control-select" value={rentalPaymentForm.utilitiesPaid} onChange={(e) => setRentalPaymentForm({...rentalPaymentForm, utilitiesPaid: e.target.value})} />
+                          </div>
+                        </div>
+                        <div>
+                          <label className="input-label-flat">Fizetés Dátuma</label>
+                          <input type="date" className="form-control-select" value={rentalPaymentForm.paymentDate} onChange={(e) => setRentalPaymentForm({...rentalPaymentForm, paymentDate: e.target.value})} />
+                        </div>
+                        <button className="btn-submit-form" onClick={handleSaveRentalPayment}>Befizetés Rögzítése</button>
+                      </div>
+                    </div>
+                  )}
+                </aside>
+
+                <section className="main-viewport-pane">
+                  {rentalCalculation && (
+                    <>
+                      {/* KPI KÁRTYÁK */}
+                      <div className="kpi-cards-flex-grid">
+                        <div className="ui-widget-card kpi-tile">
+                          <span className="kpi-label">Kaució</span>
+                          <span className="kpi-value">{parseFloat(rentalCalculation.contract?.deposit_amount || 240000).toLocaleString()} Ft</span>
+                          <small className="kpi-sub">Bérlő: {rentalCalculation.contract?.tenant_email || 'Nincs megadva'}</small>
+                        </div>
+
+                        <div className="ui-widget-card kpi-tile">
+                          <span className="kpi-label">Havi Bérleti Díj</span>
+                          <span className="kpi-value font-emerald">{parseFloat(rentalCalculation.contract?.monthly_rent || 120000).toLocaleString()} Ft/hó</span>
+                          <small className="kpi-sub">Szerződéses alapdíj</small>
+                        </div>
+
+                        <div className="ui-widget-card kpi-tile">
+                          <span className="kpi-label">Göngyölített Egyenleg</span>
+                          <span className="kpi-value" style={{ color: rentalCalculation.totalBalance >= 0 ? '#10b981' : '#ef4444' }}>
+                            {rentalCalculation.totalBalance >= 0 ? '+' : ''}{Math.round(rentalCalculation.totalBalance).toLocaleString()} Ft
+                          </span>
+                          <small className="kpi-sub">{rentalCalculation.totalBalance >= 0 ? 'Túlfizetés' : 'Elmaradás / Hátralék'}</small>
+                        </div>
+                      </div>
+
+                      {/* HAVI ELSZÁMOLÁSOK TÁBLÁZAT */}
+                      <div className="ui-widget-card scrollable-list" style={{ maxHeight: '500px' }}>
+                        <h3 className="card-heading-clean">📋 Havi Rezsi + Bérleti Díj Elszámolás</h3>
+                        <div className="modern-data-table-stack">
+                          {rentalCalculation.monthlyBreakdown.map((row: any) => (
+                            <div key={row.month} className="table-row-card" style={{ padding: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <div>
+                                <div style={{ fontWeight: 800, fontSize: '1rem' }}>{row.month}</div>
+                                <div style={{ fontSize: '0.8rem', color: '#64748b' }}>
+                                  Rezsi: {Math.round(row.utilitiesCost).toLocaleString()} Ft • Bérleti díj: {Math.round(row.rentCost).toLocaleString()} Ft
+                                </div>
+                              </div>
+                              
+                              <div style={{ textAlign: 'right' }}>
+                                <div style={{ fontWeight: 800, fontSize: '0.95rem' }}>
+                                  Fizetendő: <span style={{ color: '#0f172a' }}>{Math.round(row.monthDue).toLocaleString()} Ft</span>
+                                </div>
+                                <div style={{ fontSize: '0.8rem' }}>
+                                  Befizetve: <span className="font-emerald">{Math.round(row.monthPaid).toLocaleString()} Ft</span> 
+                                  {row.diff !== 0 && (
+                                    <span style={{ color: row.diff > 0 ? '#10b981' : '#ef4444', marginLeft: '6px', fontWeight: 700 }}>
+                                      ({row.diff > 0 ? '+' : ''}{Math.round(row.diff).toLocaleString()} Ft)
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </section>
+              </div>
+            )}
+
+            {/* ================= TAB 3: MEGTÉRÜLÉS & EV TÖLTÉS ================= */}
             {activeTab === 'ev-solar' && (
               <div className="dashboard-layout-grid">
-                
-                {/* BAL OLDALI FORMOK */}
                 <aside className="sidebar-container">
                   {!isReadOnly && (
                     <div className="ui-widget-card">
@@ -1130,7 +1005,6 @@ function App() {
                     </div>
                   )}
 
-                  {/* NAPELEM ÉS HAVI REFERENCIA FORM */}
                   {!isReadOnly && (
                     <div className="ui-widget-card">
                       <h3 className="card-heading-clean">☀️ Napelem & Áram Referencia</h3>
@@ -1183,10 +1057,7 @@ function App() {
                   )}
                 </aside>
 
-                {/* JOBB OLDALI MUTATÓK ÉS KIMUTATÁSOK */}
                 <section className="main-viewport-pane">
-                  
-                  {/* METRIKA KÁRTYÁK */}
                   <div className="kpi-cards-flex-grid">
                     <div className="ui-widget-card kpi-tile">
                       <span className="kpi-label">Zöld Áram Arány</span>
@@ -1215,7 +1086,6 @@ function App() {
                     </div>
                   </div>
 
-                  {/* PRECIZÍOS MEGTÉRÜLÉSI DÁTUM */}
                   <div className="ui-widget-card">
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
                       <h3 className="card-heading-clean" style={{ margin: 0 }}>📊 Várható Megtérülés: <span className="highlight-blue">{roiMetrics.estimatedPaybackDate}</span></h3>
@@ -1231,7 +1101,6 @@ function App() {
                     </div>
                   </div>
 
-                  {/* ÚJ GRAFIKON 1: ENERGIA MÉRLEG (TERMELTS vs FOGYASZTOTT vs HÁLÓZAT) */}
                   <div className="ui-widget-card">
                     <h3 className="card-heading-clean">☀️ Havi Energia Mérleg (kWh)</h3>
                     <ResponsiveContainer width="100%" height={240}>
@@ -1248,7 +1117,6 @@ function App() {
                     </ResponsiveContainer>
                   </div>
 
-                  {/* ÚJ GRAFIKON 2: AUTÓ HATÉKONYSÁGI TREND (kWh/100km & Ft/km) */}
                   {evEfficiencyData.length > 0 && (
                     <div className="ui-widget-card">
                       <h3 className="card-heading-clean">🚗 Autó Fogyasztási & Km-Költség Trend</h3>
@@ -1267,7 +1135,6 @@ function App() {
                     </div>
                   )}
 
-                  {/* HISTORIKUS NAPELEM ÉS HÁLÓZATI ÁRAM TÁBLÁZAT */}
                   <div className="ui-widget-card scrollable-list" style={{ maxHeight: '250px' }}>
                     <h3 className="card-heading-clean">☀️ Historikus Napelem & Áram Referenciák</h3>
                     <div className="modern-data-table-stack">
@@ -1305,7 +1172,6 @@ function App() {
 
                   <div className="dashboard-layout-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
                     
-                    {/* TÖLTŐHELYEK PIE CHART */}
                     <div className="ui-widget-card">
                       <h3 className="card-heading-clean">🎯 Töltőhelyek Megoszlása (kWh)</h3>
                       <ResponsiveContainer width="100%" height={220}>
@@ -1320,7 +1186,6 @@ function App() {
                       </ResponsiveContainer>
                     </div>
 
-                    {/* SZERKESZTHETŐ EV TÖLTÉSEK LISTÁJA */}
                     <div className="ui-widget-card scrollable-list" style={{ maxHeight: '280px' }}>
                       <h3 className="card-heading-clean">📜 Töltési Napló (Szerkeszthető)</h3>
                       <div className="modern-data-table-stack">
@@ -1357,7 +1222,7 @@ function App() {
               </div>
             )}
 
-            {/* ================= TAB 3: TRANZAKCIÓK ================= */}
+            {/* ================= TAB 4: TRANZAKCIÓK ================= */}
             {activeTab === 'transactions' && (
               <div className="fullwidth-list-view">
                 <div className="list-title-header-row">
@@ -1414,7 +1279,7 @@ function App() {
               </div>
             )}
 
-            {/* ================= TAB 4: BEÁLLÍTÁSOK ================= */}
+            {/* ================= TAB 5: BEÁLLÍTÁSOK ================= */}
             {activeTab === 'settings' && (
               <div className="settings-split-dashboard">
                 <div className="ui-widget-card grid-span-full">
@@ -1775,3 +1640,4 @@ function App() {
 }
 
 export default App;
+
