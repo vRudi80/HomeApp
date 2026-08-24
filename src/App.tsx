@@ -5,7 +5,10 @@ import {
   PieChart, Pie, Cell, Line, ComposedChart
 } from 'recharts';
 import { GoogleOAuthProvider, GoogleLogin, googleLogout } from '@react-oauth/google';
-import { jwtDecode } from "jwt-decode";
+import * as jwtDecodeModule from "jwt-decode";
+
+// MINTA ES V4 HIBATŰRŐ JWT DEKÓDER IMPORTER
+const jwtDecode: any = (jwtDecodeModule as any).jwtDecode || (jwtDecodeModule as any).default || jwtDecodeModule;
 
 const BACKEND_URL = "https://react-ideas-backend.onrender.com";
 const GOOGLE_CLIENT_ID = "197361744572-ih728hq5jft3fqfd1esvktvrd8i97kcp.apps.googleusercontent.com";
@@ -13,6 +16,42 @@ const ASSET_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#e
 const PIE_COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6'];
 
 const ADMIN_EMAILS = ['kovari.rudolf@gmail.com'];
+
+// REACT ERROR BOUNDARY - MEGAKADÁLYOZZA A FEHÉR KÉPERNYŐT
+class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean; error: any }> {
+  constructor(props: any) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: any) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: any, errorInfo: any) {
+    console.error("React Error Boundary elkapott egy hibát:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ padding: '50px 20px', textAlign: 'center', fontFamily: 'sans-serif' }}>
+          <h2>⚠️ Hiba történt a felület betöltésekor</h2>
+          <p style={{ color: '#64748b', maxWidth: '500px', margin: '10px auto' }}>
+            {this.state.error?.message || 'Ismeretlen hiba lépett fel a belépés során.'}
+          </p>
+          <button 
+            onClick={() => { localStorage.removeItem('userToken'); window.location.reload(); }}
+            style={{ padding: '12px 24px', background: '#4f46e5', color: 'white', border: 'none', borderRadius: '10px', cursor: 'pointer', fontWeight: 'bold', marginTop: '15px' }}
+          >
+            Újrapróbálkozás / Kijelentkezés
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 function calculateTieredPowerCost(kwh: number, priceLow = 36, priceHigh = 70.1, limit = 210): number {
   const safeKwh = isNaN(kwh) || kwh < 0 ? 0 : kwh;
@@ -38,7 +77,7 @@ function calculateExcelSolarSavings(totalCons: number, gridKwh: number, priceLow
   }
 }
 
-function App() {
+function MainApp() {
   const [user, setUser] = useState<any>(null);
   const [records, setRecords] = useState<any[]>([]);
   const [invoices, setInvoices] = useState<any[]>([]);
@@ -133,11 +172,15 @@ function App() {
     notes: 'Rendes havi utalás'
   });
 
-  const isReadOnly = viewingUserId !== null && viewingUserId !== user?.sub;
-  const isAdmin = user && ADMIN_EMAILS.includes(user.email);
+  const isReadOnly = viewingUserId !== null && user && viewingUserId !== user.sub;
+  const isAdmin = user && user.email && ADMIN_EMAILS.includes(user.email);
 
   function forceLogout() {
-    googleLogout();
+    try {
+      googleLogout();
+    } catch (e) {
+      console.error(e);
+    }
     setUser(null);
     setRecords([]); setInvoices([]); setAssets([]); setCategories([]);
     setSharedUsers([]); setMyShares([]); setEvLogs([]); setBenchmarks([]);
@@ -147,7 +190,17 @@ function App() {
 
   function handleLoginSuccess(token: string) {
     try {
-      const decoded: any = jwtDecode(token);
+      let decoded: any = {};
+      if (typeof jwtDecode === 'function') {
+        decoded = jwtDecode(token);
+      } else {
+        throw new Error("JWT dekóder nem elérhető.");
+      }
+
+      if (!decoded || !decoded.sub) {
+        throw new Error("Érvénytelen belépési adatok.");
+      }
+
       setUser({ ...decoded, token });
       setViewingUserId(decoded.sub);
       localStorage.setItem('userToken', token);
@@ -159,14 +212,13 @@ function App() {
       fetch(`${BACKEND_URL}/api/login-sync`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
-      });
+      }).catch(err => console.error(err));
     } catch (e) { 
-      console.error(e);
+      console.error("Login hiba:", e);
       forceLogout(); 
     }
   }
 
-  // CSALÁDI FIÓK VÁLTÁS
   function handleSwitchAccount(targetSub: string) {
     setViewingUserId(targetSub);
     if (user?.token) {
@@ -198,6 +250,7 @@ function App() {
   }
 
   function getColor(t: string) {
+    if (!t) return '#64748b';
     if (displayMode === 'cost' && t !== 'Összes' && t !== 'Összes kiadás') return '#10b981';
     if (t === 'Összes') return '#4f46e5'; 
     if (t === 'Összes kiadás') return '#ef4444';
@@ -211,8 +264,9 @@ function App() {
       case 'Albérlet': return '#db2777';
       default: 
         let hash = 0;
-        for (let i = 0; i < t.length; i++) hash = t.charCodeAt(i) + ((hash << 5) - hash);
-        return `hsl(${hash % 360}, 65%, 55%)`;
+        const str = String(t);
+        for (let i = 0; i < str.length; i++) hash = str.charCodeAt(i) + ((hash << 5) - hash);
+        return `hsl(${Math.abs(hash) % 360}, 65%, 55%)`;
     }
   }
 
@@ -254,7 +308,6 @@ function App() {
         const safeShared = Array.isArray(shared) ? shared : [];
         setSharedUsers(safeShared);
 
-        // HA A FELHASZNÁLÓNAK NINCS SAJÁT ESZKÖZE, AUTOMATIKUSAN ÁTVÁLTUNK A VELE MEGOSZTOTT FIÓKRA!
         if (safeShared.length > 0 && user && viewingUserId === user.sub && assets.length === 0) {
           handleSwitchAccount(safeShared[0].owner_id);
         }
@@ -572,6 +625,47 @@ function App() {
     if (res.ok) fetchMyShares(user.token);
   }
 
+  useEffect(() => {
+    const savedToken = localStorage.getItem('userToken');
+    if (savedToken) handleLoginSuccess(savedToken);
+  }, []);
+
+  useEffect(() => {
+    if (assets.length > 0 && !matrixSelectedAssetId) {
+      setMatrixSelectedAssetId(String(assets[0].Id));
+    }
+  }, [assets]);
+
+  useEffect(() => {
+    const allowed = getAllowedTypes(targetAssetId);
+    if (allowed.length > 0) {
+      if (!type || !allowed.includes(type)) {
+        setType(allowed[0]);
+      }
+    } else {
+      setType('');
+    }
+  }, [targetAssetId, assets, categories, assetCategoryMap]);
+
+  useEffect(() => {
+    const asset = assets.find(a => String(a.Id) === String(targetAssetId));
+    const currentCat = categories.find(c => c.Name === type);
+    if (asset?.Category === 'car' || currentCat?.Type === 'invoice_only' || currentCat?.Type === 'income') {
+      setRecordMode('invoice');
+    }
+  }, [targetAssetId, type, assets, categories]);
+
+  const isMeterDisabled = useMemo(() => {
+    const asset = assets.find(a => String(a.Id) === String(targetAssetId));
+    const currentCat = categories.find(c => c.Name === type);
+    return asset?.Category === 'car' || currentCat?.Type === 'invoice_only' || currentCat?.Type === 'income';
+  }, [targetAssetId, type, assets, categories]);
+
+  const visibleCategories = useMemo(() => {
+    const allowedNames = getAllowedTypes(selectedAssetId);
+    return categories.filter(c => allowedNames.includes(c.Name));
+  }, [categories, selectedAssetId, assetCategoryMap]);
+
   const combinedList = useMemo(() => {
     const safeRecords = Array.isArray(records) ? records : [];
     const safeInvoices = Array.isArray(invoices) ? invoices : [];
@@ -621,14 +715,14 @@ function App() {
 
   const solarEnergyBalanceData = useMemo(() => {
     const safeBm = Array.isArray(benchmarks) ? benchmarks : [];
-    return safeBm.slice().sort((a, b) => String(a.month || '').localeCompare(String(b.month || ''))).map(bm => {
-      const totalCons = parseFloat(bm.total_consumed_kwh || 0) || 0;
-      const gridKwh = parseFloat(bm.grid_kwh || 0) || 0;
-      const solarKwh = parseFloat(bm.solar_kwh || 0) || 0;
+    return safeBm.slice().sort((a, b) => String(a?.month || '').localeCompare(String(b?.month || ''))).map(bm => {
+      const totalCons = parseFloat(bm?.total_consumed_kwh || 0) || 0;
+      const gridKwh = parseFloat(bm?.grid_kwh || 0) || 0;
+      const solarKwh = parseFloat(bm?.solar_kwh || 0) || 0;
       const selfConsumedSolar = Math.max(0, totalCons - gridKwh);
 
       return {
-        month: bm.month || '',
+        month: bm?.month || '',
         solar: solarKwh,
         consumed: totalCons,
         grid: gridKwh,
@@ -858,7 +952,7 @@ function App() {
         }
       });
     }
-    const sorted = Object.values(dataMap).sort((a: any, b: any) => a.label.localeCompare(b.label));
+    const sorted = Object.values(dataMap).sort((a: any, b: any) => String(a?.label || '').localeCompare(String(b?.label || '')));
     return chartRange === 'custom' 
       ? sorted.filter((item: any) => item.label >= customStartDate && item.label <= customEndDate)
       : (chartRange === 'all' ? sorted : sorted.slice(-chartRange));
@@ -1013,1078 +1107,1084 @@ function App() {
   }, [assets]);
 
   return (
-    <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
-      <div className="app-container">
+    <div className="app-container">
+      
+      <datalist id="charging-locations-list">
+        {uniqueLocations.map((loc, idx) => (
+          <option key={idx} value={loc} />
+        ))}
+      </datalist>
+
+      {/* --- NAVBAR WITH ACCOUNT SWITCHER --- */}
+      <header className="app-header">
+        <div className="header-brand-section">
+          <span className="brand-icon">⚡</span>
+          <h2>Rezsiapp <span className="version-tag">2.0</span></h2>
+        </div>
         
-        <datalist id="charging-locations-list">
-          {uniqueLocations.map((loc, idx) => (
-            <option key={idx} value={loc} />
-          ))}
-        </datalist>
+        {user && (
+          <nav className="header-navigation-tabs">
+            <button className={`nav-tab-link ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveTab('dashboard')}>📊 Műszerfal</button>
+            <button className={`nav-tab-link ${activeTab === 'rental' ? 'active' : ''}`} onClick={() => setActiveTab('rental')}>🏠 Albérlet</button>
+            <button className={`nav-tab-link ${activeTab === 'ev-solar' ? 'active' : ''}`} onClick={() => setActiveTab('ev-solar')}>⚡ Megtérülés & EV</button>
+            <button className={`nav-tab-link ${activeTab === 'transactions' ? 'active' : ''}`} onClick={() => setActiveTab('transactions')}>📜 Tranzakciók</button>
+            <button className={`nav-tab-link ${activeTab === 'settings' ? 'active' : ''}`} onClick={() => setActiveTab('settings')}>⚙️ Beállítások</button>
+          </nav>
+        )}
 
-        {/* --- NAVBAR WITH ACCOUNT SWITCHER --- */}
-        <header className="app-header">
-          <div className="header-brand-section">
-            <span className="brand-icon">⚡</span>
-            <h2>Rezsiapp <span className="version-tag">2.0</span></h2>
+        {user && (
+          <div className="header-user-badge">
+            {sharedUsers.length > 0 && (
+              <select 
+                className="form-control-select styled-range-select" 
+                style={{ height: '36px', fontSize: '0.8rem !important' }}
+                value={viewingUserId || user.sub} 
+                onChange={(e) => handleSwitchAccount(e.target.value)}
+              >
+                <option value={user.sub}>👤 Saját fiók ({user.email})</option>
+                {sharedUsers.map((su: any) => (
+                  <option key={su.owner_id} value={su.owner_id}>🤝 {su.owner_email} fiókja</option>
+                ))}
+              </select>
+            )}
+
+            <img src={user.picture || 'https://via.placeholder.com/36'} alt="Avatar" className="user-round-avatar" />
+            <button className="logout-trigger-btn" onClick={forceLogout} title="Kijelentkezés">🚪</button>
           </div>
+        )}
+      </header>
+
+      {user ? (
+        <div className="main-content-router">
           
-          {user && (
-            <nav className="header-navigation-tabs">
-              <button className={`nav-tab-link ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveTab('dashboard')}>📊 Műszerfal</button>
-              <button className={`nav-tab-link ${activeTab === 'rental' ? 'active' : ''}`} onClick={() => setActiveTab('rental')}>🏠 Albérlet</button>
-              <button className={`nav-tab-link ${activeTab === 'ev-solar' ? 'active' : ''}`} onClick={() => setActiveTab('ev-solar')}>⚡ Megtérülés & EV</button>
-              <button className={`nav-tab-link ${activeTab === 'transactions' ? 'active' : ''}`} onClick={() => setActiveTab('transactions')}>📜 Tranzakciók</button>
-              <button className={`nav-tab-link ${activeTab === 'settings' ? 'active' : ''}`} onClick={() => setActiveTab('settings')}>⚙️ Beállítások</button>
-            </nav>
-          )}
+          {/* ================= TAB 1: MŰSZERFAL ================= */}
+          {activeTab === 'dashboard' && (
+            <div className="dashboard-layout-grid">
+              <aside className="sidebar-container">
+                <div className="ui-widget-card">
+                  <label className="input-label-flat">Eszköz gyorsválasztó</label>
+                  <select className="form-control-select" value={selectedAssetId} onChange={(e) => setSelectedAssetId(e.target.value)}>
+                    <option value="all">🌐 Összesített nézet</option>
+                    {assets.map((a: any) => (
+                      <option key={a.Id} value={String(a.Id)}>{a.Category === 'car' ? '🚗' : a.Category === 'person' ? '👤' : '🏠'} {a.FriendlyName}</option>
+                    ))}
+                  </select>
+                </div>
 
-          {user && (
-            <div className="header-user-badge">
-              {/* FIÓKVÁLTÓ SELECTOR HA VAN MEGSZOLT FIÓK */}
-              {sharedUsers.length > 0 && (
-                <select 
-                  className="form-control-select styled-range-select" 
-                  style={{ height: '36px', fontSize: '0.8rem !important' }}
-                  value={viewingUserId || user.sub} 
-                  onChange={(e) => handleSwitchAccount(e.target.value)}
-                >
-                  <option value={user.sub}>👤 Saját fiók ({user.email})</option>
-                  {sharedUsers.map((su: any) => (
-                    <option key={su.owner_id} value={su.owner_id}>🤝 {su.owner_email} fiókja</option>
-                  ))}
-                </select>
-              )}
+                {!isReadOnly && assets.length > 0 && (
+                  <div className="ui-widget-card">
+                    <h3 className="card-heading-clean">{editingRecordId ? "✏️ Tranzakció szerkesztése" : "Új adat hozzáadása"}</h3>
+                    <div className="mode-toggle-pill">
+                      <button 
+                        className={`pill-item ${recordMode === 'meter' ? 'active' : ''}`} 
+                        onClick={() => setRecordMode('meter')}
+                        disabled={isMeterDisabled}
+                      >
+                        {isMeterDisabled ? '🔒 Óraállás' : '📟 Óraállás'}
+                      </button>
+                      <button className={`pill-item ${recordMode === 'invoice' ? 'active' : ''}`} onClick={() => setRecordMode('invoice')}>💰 Számla</button>
+                    </div>
+                    <div className="form-stack-vertical">
+                      <select className="form-control-select" value={targetAssetId} onChange={(e) => setTargetAssetId(e.target.value)}>
+                        <option value="">Eszköz választás...</option>
+                        {assets.map((a: any) => (<option key={a.Id} value={String(a.Id)}>{a.FriendlyName}</option>))}
+                      </select>
+                      <select className="form-control-select" value={type} onChange={(e) => setType(e.target.value)}>
+                        {getAllowedTypes(targetAssetId).map(t => <option key={t} value={t}>{getIcon(t)} {t}</option>)}
+                      </select>
+                      <input className="form-control-select" type="date" value={recordMode === 'meter' ? meterDate : invoiceDate} onChange={(e) => recordMode === 'meter' ? setMeterDate(e.target.value) : setInvoiceDate(e.target.value)} />
+                      <input className="form-control-select" type="number" value={value} onChange={(e) => setValue(e.target.value)} placeholder="Érték (egység / Ft)" />
+                      
+                      <div className="action-buttons-row">
+                        <button className="btn-submit-form" onClick={handleSave} disabled={!targetAssetId || targetAssetId === 'all' || !value}>
+                          {editingRecordId ? 'Módosítás mentése' : 'Adat mentése'}
+                        </button>
+                        {editingRecordId && <button className="btn-action-primary" style={{backgroundColor: '#64748b'}} onClick={cancelRecordEdit}>Mégse</button>}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </aside>
 
-              <img src={user.picture} alt="Avatar" className="user-round-avatar" />
-              <button className="logout-trigger-btn" onClick={forceLogout} title="Kijelentkezés">🚪</button>
+              <section className="main-viewport-pane">
+                <div className="ui-widget-card">
+                  <div className="grid-wrapping-chips">
+                    <button 
+                      className={`grid-chip-item ${filter.includes('Összes') ? 'active' : ''}`} 
+                      onClick={() => handleCategoryFilterClick('Összes')} 
+                      style={filter.includes('Összes') ? {backgroundColor: getColor('Összes'), color:'white'} : {}}
+                    >
+                      📊 Összesen
+                    </button>
+                    
+                    {displayMode === 'cost' && (
+                      <button 
+                        className={`grid-chip-item ${filter.includes('Összes kiadás') ? 'active' : ''}`} 
+                        onClick={() => handleCategoryFilterClick('Összes kiadás')} 
+                        style={filter.includes('Összes kiadás') ? {backgroundColor: getColor('Összes kiadás'), color:'white'} : {}}
+                      >
+                        📉 Összes kiadás
+                      </button>
+                    )}
+                    
+                    {visibleCategories.map(c => {
+                      const isSelected = filter.includes(c.Name);
+                      return (
+                        <button 
+                          key={c.Id} 
+                          className={`grid-chip-item ${isSelected ? 'active' : ''}`} 
+                          onClick={() => handleCategoryFilterClick(c.Name)} 
+                          style={isSelected ? {backgroundColor: getColor(c.Name), color: 'white'} : {}}
+                        >
+                          {c.Icon} {c.Name}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div className="chart-filter-controls-row">
+                    <div className="controls-left-side-modes">
+                      <div className="compact-btn-group">
+                        <button className={displayMode === 'usage' ? 'active' : ''} onClick={() => setDisplayMode('usage')}>Fogyasztás</button>
+                        <button className={displayMode === 'cost' ? 'active' : ''} onClick={() => setDisplayMode('cost')}>Költség</button>
+                      </div>
+                      <div className="compact-btn-group">
+                        <button className={viewMode === 'monthly' ? 'active' : ''} onClick={() => setViewMode('monthly')}>Havi</button>
+                        <button className={viewMode === 'annual' ? 'active' : ''} onClick={() => setViewMode('annual')}>Éves</button>
+                      </div>
+                    </div>
+
+                    <div className="controls-right-side-dates">
+                      <select className="form-control-select styled-range-select" value={chartRange} onChange={(e) => { const val = e.target.value; setChartRange(val === 'all' || val === 'custom' ? val : parseInt(val)); }}>
+                        {viewMode === 'monthly' && <option value={6}>Utolsó 6 hónap</option>}
+                        {viewMode === 'monthly' && <option value={12}>Utolsó 12 hónap</option>}
+                        {viewMode === 'monthly' && <option value={24}>Utolsó 24 hónap</option>}
+                        <option value="all">Minden korábbi adat</option>
+                        <option value="custom">Egyedi időszak...</option>
+                      </select>
+
+                      {chartRange === 'custom' && (
+                        <div className="custom-range-inputs-wrapper">
+                          <input type="month" className="small-date-input" value={customStartDate} onChange={(e) => setCustomStartDate(e.target.value)} />
+                          <span className="date-separator">-</span>
+                          <input type="month" className="small-date-input" value={customEndDate} onChange={(e) => setCustomEndDate(e.target.value)} />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="ui-widget-card">
+                  {assets.length > 0 ? (
+                    <ResponsiveContainer width="100%" height={320}>
+                      <BarChart data={chartData} margin={{ top: 10, right: 15, left: 10, bottom: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                        <XAxis dataKey="label" fontSize={11} stroke="#64748b" tickLine={false} />
+                        <YAxis 
+                          fontSize={11} 
+                          stroke="#64748b" 
+                          tickLine={false} 
+                          axisLine={false} 
+                          width={65}
+                          tickFormatter={(val) => val >= 1000 ? `${(val / 1000).toLocaleString()}k` : val}
+                        />
+                        <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(0,0,0,0.01)' }} />
+                        <Legend content={renderCustomLegend} />
+                        
+                        {(selectedAssetId === 'all' ? assets : assets.filter(a => String(a.Id) === String(selectedAssetId))).map((asset, idx) => {
+                          const color = ASSET_COLORS[idx % ASSET_COLORS.length];
+                          return (
+                            <React.Fragment key={asset.Id}>
+                              <Bar dataKey={asset.FriendlyName} name={asset.FriendlyName} stackId="expense" fill={color} radius={[3,3,0,0]} />
+                              <Bar 
+                                dataKey={`${asset.FriendlyName}_income`} 
+                                name={`${asset.FriendlyName} (Bevétel)`} 
+                                stackId="income" 
+                                fill={color} 
+                                opacity={0.45} 
+                                radius={[3,3,0,0]}
+                              />
+                            </React.Fragment>
+                          );
+                        })}
+                      </BarChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <div className="empty-state-text" style={{ padding: '40px 20px' }}>
+                      <h3>🌐 Nincs megjeleníthető adat</h3>
+                      <p>Még nincs eszköz rögzítve ehhez a fiókhoz. Lépj a <b>Beállítások</b> fülre új eszköz hozzáadásához!</p>
+                    </div>
+                  )}
+                </div>
+              </section>
             </div>
           )}
-        </header>
 
-        {user ? (
-          <div className="main-content-router">
-            
-            {/* ================= TAB 1: MŰSZERFAL ================= */}
-            {activeTab === 'dashboard' && (
+          {/* ================= TAB 2: ALBÉRLET KEZELÉS ================= */}
+          {activeTab === 'rental' && (
+            propertyAssets.length > 0 ? (
               <div className="dashboard-layout-grid">
                 <aside className="sidebar-container">
                   <div className="ui-widget-card">
-                    <label className="input-label-flat">Eszköz gyorsválasztó</label>
-                    <select className="form-control-select" value={selectedAssetId} onChange={(e) => setSelectedAssetId(e.target.value)}>
-                      <option value="all">🌐 Összesített nézet</option>
-                      {assets.map((a: any) => (
-                        <option key={a.Id} value={String(a.Id)}>{a.Category === 'car' ? '🚗' : a.Category === 'person' ? '👤' : '🏠'} {a.FriendlyName}</option>
+                    <label className="input-label-flat">Ingatlan Kiválasztása</label>
+                    <select className="form-control-select" value={selectedRentalAssetId} onChange={(e) => setSelectedRentalAssetId(e.target.value)}>
+                      {propertyAssets.map((a: any) => (
+                        <option key={a.Id} value={String(a.Id)}>🏠 {a.FriendlyName}</option>
                       ))}
                     </select>
                   </div>
 
-                  {!isReadOnly && assets.length > 0 && (
+                  {!isReadOnly && (
                     <div className="ui-widget-card">
-                      <h3 className="card-heading-clean">{editingRecordId ? "✏️ Tranzakció szerkesztése" : "Új adat hozzáadása"}</h3>
-                      <div className="mode-toggle-pill">
-                        <button 
-                          className={`pill-item ${recordMode === 'meter' ? 'active' : ''}`} 
-                          onClick={() => setRecordMode('meter')}
-                          disabled={isMeterDisabled}
-                        >
-                          {isMeterDisabled ? '🔒 Óraállás' : '📟 Óraállás'}
-                        </button>
-                        <button className={`pill-item ${recordMode === 'invoice' ? 'active' : ''}`} onClick={() => setRecordMode('invoice')}>💰 Számla</button>
-                      </div>
+                      <h3 className="card-heading-clean">⚙️ Szerződés & Bérlő beállítása</h3>
                       <div className="form-stack-vertical">
-                        <select className="form-control-select" value={targetAssetId} onChange={(e) => setTargetAssetId(e.target.value)}>
-                          <option value="">Eszköz választás...</option>
-                          {assets.map((a: any) => (<option key={a.Id} value={String(a.Id)}>{a.FriendlyName}</option>))}
-                        </select>
-                        <select className="form-control-select" value={type} onChange={(e) => setType(e.target.value)}>
-                          {getAllowedTypes(targetAssetId).map(t => <option key={t} value={t}>{getIcon(t)} {t}</option>)}
-                        </select>
-                        <input className="form-control-select" type="date" value={recordMode === 'meter' ? meterDate : invoiceDate} onChange={(e) => recordMode === 'meter' ? setMeterDate(e.target.value) : setInvoiceDate(e.target.value)} />
-                        <input className="form-control-select" type="number" value={value} onChange={(e) => setValue(e.target.value)} placeholder="Érték (egység / Ft)" />
-                        
-                        <div className="action-buttons-row">
-                          <button className="btn-submit-form" onClick={handleSave} disabled={!targetAssetId || targetAssetId === 'all' || !value}>
-                            {editingRecordId ? 'Módosítás mentése' : 'Adat mentése'}
-                          </button>
-                          {editingRecordId && <button className="btn-action-primary" style={{backgroundColor: '#64748b'}} onClick={cancelRecordEdit}>Mégse</button>}
+                        <div>
+                          <label className="input-label-flat">Bérlő Google E-mail Címe</label>
+                          <input 
+                            type="email" 
+                            className="form-control-select" 
+                            placeholder="berlo@gmail.com" 
+                            value={rentalContractForm.tenantEmail} 
+                            onChange={(e) => setRentalContractForm({...rentalContractForm, tenantEmail: e.target.value})} 
+                          />
                         </div>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <div style={{ flex: 1 }}>
+                            <label className="input-label-flat">Havi Bérleti Díj (Ft)</label>
+                            <input type="number" className="form-control-select" value={rentalContractForm.monthlyRent} onChange={(e) => setRentalContractForm({...rentalContractForm, monthlyRent: e.target.value})} />
+                          </div>
+                          <div style={{ flex: 1 }}>
+                            <label className="input-label-flat">Kaució (Ft)</label>
+                            <input type="number" className="form-control-select" value={rentalContractForm.depositAmount} onChange={(e) => setRentalContractForm({...rentalContractForm, depositAmount: e.target.value})} />
+                          </div>
+                        </div>
+                        <button className="btn-action-primary" onClick={handleSaveRentalContract}>Szerződés & Megosztás Mentése</button>
+                      </div>
+                    </div>
+                  )}
+
+                  {!isReadOnly && (
+                    <div className="ui-widget-card">
+                      <h3 className="card-heading-clean">💵 Befizetés Rögzítése</h3>
+                      <div className="form-stack-vertical">
+                        <div>
+                          <label className="input-label-flat">Elszámolási Hónap</label>
+                          <input type="month" className="form-control-select" value={rentalPaymentForm.month} onChange={(e) => setRentalPaymentForm({...rentalPaymentForm, month: e.target.value})} />
+                        </div>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <div style={{ flex: 1 }}>
+                            <label className="input-label-flat">Befizetett Bérleti Díj</label>
+                            <input type="number" className="form-control-select" value={rentalPaymentForm.rentPaid} onChange={(e) => setRentalPaymentForm({...rentalPaymentForm, rentPaid: e.target.value})} />
+                          </div>
+                          <div style={{ flex: 1 }}>
+                            <label className="input-label-flat">Befizetett Rezsi</label>
+                            <input type="number" className="form-control-select" value={rentalPaymentForm.utilitiesPaid} onChange={(e) => setRentalPaymentForm({...rentalPaymentForm, utilitiesPaid: e.target.value})} />
+                          </div>
+                        </div>
+                        <div>
+                          <label className="input-label-flat">Fizetés Dátuma</label>
+                          <input type="date" className="form-control-select" value={rentalPaymentForm.paymentDate} onChange={(e) => setRentalPaymentForm({...rentalPaymentForm, paymentDate: e.target.value})} />
+                        </div>
+                        <button className="btn-submit-form" onClick={handleSaveRentalPayment}>Befizetés Rögzítése</button>
                       </div>
                     </div>
                   )}
                 </aside>
 
                 <section className="main-viewport-pane">
-                  <div className="ui-widget-card">
-                    <div className="grid-wrapping-chips">
-                      <button 
-                        className={`grid-chip-item ${filter.includes('Összes') ? 'active' : ''}`} 
-                        onClick={() => handleCategoryFilterClick('Összes')} 
-                        style={filter.includes('Összes') ? {backgroundColor: getColor('Összes'), color:'white'} : {}}
-                      >
-                        📊 Összesen
-                      </button>
-                      
-                      {displayMode === 'cost' && (
-                        <button 
-                          className={`grid-chip-item ${filter.includes('Összes kiadás') ? 'active' : ''}`} 
-                          onClick={() => handleCategoryFilterClick('Összes kiadás')} 
-                          style={filter.includes('Összes kiadás') ? {backgroundColor: getColor('Összes kiadás'), color:'white'} : {}}
-                        >
-                          📉 Összes kiadás
-                        </button>
-                      )}
-                      
-                      {visibleCategories.map(c => {
-                        const isSelected = filter.includes(c.Name);
-                        return (
-                          <button 
-                            key={c.Id} 
-                            className={`grid-chip-item ${isSelected ? 'active' : ''}`} 
-                            onClick={() => handleCategoryFilterClick(c.Name)} 
-                            style={isSelected ? {backgroundColor: getColor(c.Name), color: 'white'} : {}}
-                          >
-                            {c.Icon} {c.Name}
-                          </button>
-                        );
-                      })}
-                    </div>
-
-                    <div className="chart-filter-controls-row">
-                      <div className="controls-left-side-modes">
-                        <div className="compact-btn-group">
-                          <button className={displayMode === 'usage' ? 'active' : ''} onClick={() => setDisplayMode('usage')}>Fogyasztás</button>
-                          <button className={displayMode === 'cost' ? 'active' : ''} onClick={() => setDisplayMode('cost')}>Költség</button>
+                  {rentalCalculation && (
+                    <>
+                      <div className="kpi-cards-flex-grid">
+                        <div className="ui-widget-card kpi-tile">
+                          <span className="kpi-label">Kaució</span>
+                          <span className="kpi-value">{parseFloat(rentalCalculation.contract?.deposit_amount || 0).toLocaleString()} Ft</span>
+                          <small className="kpi-sub">Bérlő: {rentalCalculation.contract?.tenant_email || 'Nincs megadva'}</small>
                         </div>
-                        <div className="compact-btn-group">
-                          <button className={viewMode === 'monthly' ? 'active' : ''} onClick={() => setViewMode('monthly')}>Havi</button>
-                          <button className={viewMode === 'annual' ? 'active' : ''} onClick={() => setViewMode('annual')}>Éves</button>
+
+                        <div className="ui-widget-card kpi-tile">
+                          <span className="kpi-label">Havi Bérleti Díj</span>
+                          <span className="kpi-value font-emerald">{parseFloat(rentalCalculation.contract?.monthly_rent || 0).toLocaleString()} Ft/hó</span>
+                          <small className="kpi-sub">Szerződéses alapdíj</small>
+                        </div>
+
+                        <div className="ui-widget-card kpi-tile">
+                          <span className="kpi-label">Göngyölített Egyenleg</span>
+                          <span className="kpi-value" style={{ color: rentalCalculation.totalBalance >= 0 ? '#10b981' : '#ef4444' }}>
+                            {rentalCalculation.totalBalance >= 0 ? '+' : ''}{Math.round(rentalCalculation.totalBalance).toLocaleString()} Ft
+                          </span>
+                          <small className="kpi-sub">{rentalCalculation.totalBalance >= 0 ? 'Túlfizetés' : 'Elmaradás / Hátralék'}</small>
                         </div>
                       </div>
 
-                      <div className="controls-right-side-dates">
-                        <select className="form-control-select styled-range-select" value={chartRange} onChange={(e) => { const val = e.target.value; setChartRange(val === 'all' || val === 'custom' ? val : parseInt(val)); }}>
-                          {viewMode === 'monthly' && <option value={6}>Utolsó 6 hónap</option>}
-                          {viewMode === 'monthly' && <option value={12}>Utolsó 12 hónap</option>}
-                          {viewMode === 'monthly' && <option value={24}>Utolsó 24 hónap</option>}
-                          <option value="all">Minden korábbi adat</option>
-                          <option value="custom">Egyedi időszak...</option>
-                        </select>
+                      <div className="ui-widget-card scrollable-list" style={{ maxHeight: '500px' }}>
+                        <h3 className="card-heading-clean">📋 Havi Rezsi + Bérleti Díj Elszámolás</h3>
+                        {rentalCalculation.monthlyBreakdown.length > 0 ? (
+                          <div className="modern-data-table-stack">
+                            {rentalCalculation.monthlyBreakdown.map((row: any) => (
+                              <div key={row.month} className="table-row-card" style={{ padding: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <div>
+                                  <div style={{ fontWeight: 800, fontSize: '1rem' }}>{row.month}</div>
+                                  <div style={{ fontSize: '0.8rem', color: '#64748b' }}>
+                                    Rezsi: {Math.round(row.utilitiesCost).toLocaleString()} Ft • Bérleti díj: {Math.round(row.rentCost).toLocaleString()} Ft
+                                  </div>
+                                </div>
+                                
+                                <div style={{ textAlign: 'right' }}>
+                                  <div style={{ fontWeight: 800, fontSize: '0.95rem' }}>
+                                    Fizetendő: <span style={{ color: '#0f172a' }}>{Math.round(row.monthDue).toLocaleString()} Ft</span>
+                                  </div>
+                                  <div style={{ fontSize: '0.8rem' }}>
+                                    Befizetve: <span className="font-emerald">{Math.round(row.monthPaid).toLocaleString()} Ft</span> 
+                                    {row.diff !== 0 && (
+                                      <span style={{ color: row.diff > 0 ? '#10b981' : '#ef4444', marginLeft: '6px', fontWeight: 700 }}>
+                                        ({row.diff > 0 ? '+' : ''}{Math.round(row.diff).toLocaleString()} Ft)
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="empty-state-text">Még nincs elszámolás ehhez az ingatlanhoz.</div>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </section>
+              </div>
+            ) : (
+              <div className="ui-widget-card" style={{ padding: '50px 20px', textAlign: 'center' }}>
+                <span style={{ fontSize: '3rem' }}>🔒</span>
+                <h3 style={{ marginTop: '10px' }}>Nincs ingatlan hozzárendelve</h3>
+                <p style={{ color: 'var(--text-muted)', maxWidth: '500px', margin: '10px auto 0 auto' }}>
+                  Ehhez a fiókhoz még nincs ingatlan rögzítve vagy megosztva. Ha te vagy a tulajdonos, adj hozzá egy ingatlant a <b>Beállítások</b> fülön!
+                </p>
+              </div>
+            )
+          )}
 
-                        {chartRange === 'custom' && (
-                          <div className="custom-range-inputs-wrapper">
-                            <input type="month" className="small-date-input" value={customStartDate} onChange={(e) => setCustomStartDate(e.target.value)} />
-                            <span className="date-separator">-</span>
-                            <input type="month" className="small-date-input" value={customEndDate} onChange={(e) => setCustomEndDate(e.target.value)} />
+          {/* ================= TAB 3: MEGTÉRÜLÉS & EV TÖLTÉS ================= */}
+          {activeTab === 'ev-solar' && (
+            assets.length > 0 ? (
+              <div className="dashboard-layout-grid">
+                <aside className="sidebar-container">
+                  {!isReadOnly && (
+                    <div className="ui-widget-card">
+                      <h3 className="card-heading-clean">{editingEvLogId ? "✏️ EV Töltés szerkesztése" : "🔌 Új EV Töltés rögzítése"}</h3>
+                      <div className="form-stack-vertical">
+                        <div>
+                          <label className="input-label-flat">Dátum</label>
+                          <input type="date" className="form-control-select" value={newEvLog.date} onChange={(e) => setNewEvLog({...newEvLog, date: e.target.value})} />
+                        </div>
+                        
+                        <div>
+                          <label className="input-label-flat">Töltőhely (Szabadon beírható)</label>
+                          <input 
+                            type="text" 
+                            list="charging-locations-list" 
+                            className="form-control-select" 
+                            placeholder="pl. Napelem, Tesla, Ionity..." 
+                            value={newEvLog.location} 
+                            onChange={(e) => setNewEvLog({...newEvLog, location: e.target.value})} 
+                          />
+                        </div>
+
+                        <div>
+                          <label className="input-label-flat">Töltési forrás</label>
+                          <select className="form-control-select" value={newEvLog.charge_source} onChange={(e) => setNewEvLog({...newEvLog, charge_source: e.target.value})}>
+                            <option value="Napelem">☀️ Napelem (Ingyenes)</option>
+                            <option value="Hálózat">🏠 Otthoni Hálózat</option>
+                            <option value="Nyilvános">⚡ Nyilvános Töltő</option>
+                          </select>
+                        </div>
+
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <div style={{ flex: 1 }}>
+                            <label className="input-label-flat">Kezdő %</label>
+                            <input type="number" className="form-control-select" placeholder="pl. 25%" value={newEvLog.start_soc} onChange={(e) => setNewEvLog({...newEvLog, start_soc: e.target.value})} />
+                          </div>
+                          <div style={{ flex: 1 }}>
+                            <label className="input-label-flat">Feltöltött %</label>
+                            <input type="number" className="form-control-select" placeholder="pl. 80%" value={newEvLog.end_soc} onChange={(e) => setNewEvLog({...newEvLog, end_soc: e.target.value})} />
+                          </div>
+                        </div>
+
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <div style={{ flex: 1 }}>
+                            <label className="input-label-flat">Betöltött kWh</label>
+                            <input type="number" step="0.01" className="form-control-select" placeholder="kWh" value={newEvLog.kwh_amount} onChange={(e) => setNewEvLog({...newEvLog, kwh_amount: e.target.value})} />
+                          </div>
+                          <div style={{ flex: 1 }}>
+                            <label className="input-label-flat">Költség (Ft)</label>
+                            <input type="number" className="form-control-select" placeholder="Ft" value={newEvLog.cost_huf} onChange={(e) => setNewEvLog({...newEvLog, cost_huf: e.target.value})} />
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="input-label-flat">Megtett KM (utolsó töltés óta)</label>
+                          <input type="number" className="form-control-select" placeholder="pl. 150 km" value={newEvLog.driven_km} onChange={(e) => setNewEvLog({...newEvLog, driven_km: e.target.value})} />
+                        </div>
+
+                        <div className="action-buttons-row">
+                          <button className="btn-submit-form" onClick={handleEvLogSave}>
+                            {editingEvLogId ? 'Módosítás mentése' : 'Töltés mentése'}
+                          </button>
+                          {editingEvLogId && <button className="btn-action-primary" style={{backgroundColor: '#64748b'}} onClick={cancelEvLogEdit}>Mégse</button>}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {!isReadOnly && (
+                    <div className="ui-widget-card">
+                      <h3 className="card-heading-clean">☀️ Napelem & Áram Referencia</h3>
+                      <div className="form-stack-vertical">
+                        <div>
+                          <label className="input-label-flat">Hónap Kiválasztása</label>
+                          <input 
+                            type="month" 
+                            className="form-control-select" 
+                            value={benchmarkForm.month} 
+                            onChange={(e) => handleBenchmarkMonthChange(e.target.value)} 
+                          />
+                        </div>
+
+                        <div>
+                          <label className="input-label-flat">Összes Háztartási Fogyasztás (kWh)</label>
+                          <input type="number" step="0.1" className="form-control-select" placeholder="pl. 325 kWh" value={benchmarkForm.total_consumed_kwh} onChange={(e) => setBenchmarkForm({...benchmarkForm, total_consumed_kwh: e.target.value})} />
+                        </div>
+                        
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <div style={{ flex: 1 }}>
+                            <label className="input-label-flat">Napelem Termelés (kWh)</label>
+                            <input type="number" step="0.1" className="form-control-select" placeholder="kWh" value={benchmarkForm.solar_kwh} onChange={(e) => setBenchmarkForm({...benchmarkForm, solar_kwh: e.target.value})} />
+                          </div>
+                          <div style={{ flex: 1 }}>
+                            <label className="input-label-flat">Hálózati Vételezés (kWh)</label>
+                            <input type="number" step="0.1" className="form-control-select" placeholder="kWh" value={benchmarkForm.grid_kwh} onChange={(e) => setBenchmarkForm({...benchmarkForm, grid_kwh: e.target.value})} />
+                          </div>
+                        </div>
+
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <div style={{ flex: 1 }}>
+                            <label className="input-label-flat">Benzinár (Ft/l)</label>
+                            <input type="number" className="form-control-select" value={benchmarkForm.gasoline_price} onChange={(e) => setBenchmarkForm({...benchmarkForm, gasoline_price: e.target.value})} />
+                          </div>
+                          <div style={{ flex: 1 }}>
+                            <label className="input-label-flat">Ref. Fogy. (l/100km)</label>
+                            <input type="number" step="0.1" className="form-control-select" value={benchmarkForm.avg_consumption} onChange={(e) => setBenchmarkForm({...benchmarkForm, avg_consumption: e.target.value})} />
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="input-label-flat">Napelem Beruházás (Ft)</label>
+                          <input type="number" className="form-control-select" value={benchmarkForm.solar_investment} onChange={(e) => setBenchmarkForm({...benchmarkForm, solar_investment: e.target.value})} />
+                        </div>
+
+                        <button className="btn-action-primary" onClick={handleBenchmarkSave}>Adatok mentése ehhez a hónaphoz</button>
+                      </div>
+                    </div>
+                  )}
+                </aside>
+
+                <section className="main-viewport-pane">
+                  <div className="kpi-cards-flex-grid">
+                    <div className="ui-widget-card kpi-tile">
+                      <span className="kpi-label">Zöld Áram Arány</span>
+                      <span className="kpi-value font-emerald">{roiMetrics.greenRatio.toFixed(1)}%</span>
+                      <small className="kpi-sub">{roiMetrics.solarKwh.toFixed(1)} kWh napelemből</small>
+                    </div>
+
+                    <div className="ui-widget-card kpi-tile">
+                      <span className="kpi-label">EV Költség / KM</span>
+                      <span className="kpi-value">{roiMetrics.costPerKm.toFixed(1)} Ft/km</span>
+                      <small className="kpi-sub">Megtett: {roiMetrics.totalKm.toLocaleString()} km</small>
+                    </div>
+
+                    <div className="ui-widget-card kpi-tile">
+                      <span className="kpi-label">Összes Megtakarítás</span>
+                      <span className="kpi-value font-emerald">+{Math.round(roiMetrics.totalSavingsHuf).toLocaleString()} Ft</span>
+                      <small className="kpi-sub">EV: {Math.round(roiMetrics.evSavingsHuf).toLocaleString()} Ft | Áram: {Math.round(roiMetrics.solarHouseholdSavingsHuf).toLocaleString()} Ft</small>
+                    </div>
+
+                    <div className="ui-widget-card kpi-tile">
+                      <span className="kpi-label">Megtérülési Egyenleg</span>
+                      <span className="kpi-value" style={{ color: roiMetrics.currentBalance >= 0 ? '#10b981' : '#ef4444' }}>
+                        {roiMetrics.currentBalance >= 0 ? '+' : ''}{Math.round(roiMetrics.currentBalance).toLocaleString()} Ft
+                      </span>
+                      <small className="kpi-sub">Beruházás: {Math.round(roiMetrics.totalInvestment).toLocaleString()} Ft</small>
+                    </div>
+                  </div>
+
+                  <div className="ui-widget-card">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                      <h3 className="card-heading-clean" style={{ margin: 0 }}>📊 Várható Megtérülés: <span className="highlight-blue">{roiMetrics.estimatedPaybackDate}</span></h3>
+                      <span className="row-badge-type">Napi átlag: +{Math.round(roiMetrics.dailySavingsHuf).toLocaleString()} Ft/nap</span>
+                    </div>
+
+                    <div className="roi-progress-wrapper">
+                      <div className="roi-progress-bar" style={{ width: `${Math.min(100, Math.max(0, (roiMetrics.totalSavingsHuf / (roiMetrics.totalInvestment || 1)) * 100))}%` }} />
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '8px', fontSize: '0.8rem', color: '#64748b' }}>
+                      <span>Eltelt napok: {roiMetrics.elapsedDays} nap</span>
+                      <span>Hátralévő napok: {roiMetrics.remainingDays} nap</span>
+                    </div>
+                  </div>
+
+                  {solarEnergyBalanceData.length > 0 && (
+                    <div className="ui-widget-card">
+                      <h3 className="card-heading-clean">☀️ Havi Energia Mérleg (kWh)</h3>
+                      <ResponsiveContainer width="100%" height={240}>
+                        <BarChart data={solarEnergyBalanceData} margin={{ top: 10, right: 15, left: 10, bottom: 0 }}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                          <XAxis dataKey="month" fontSize={11} stroke="#64748b" tickLine={false} />
+                          <YAxis fontSize={11} stroke="#64748b" tickLine={false} axisLine={false} width={45} />
+                          <Tooltip />
+                          <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
+                          <Bar dataKey="consumed" name="Összes Fogyasztás" fill="#3b82f6" radius={[3,3,0,0]} />
+                          <Bar dataKey="solar" name="Napelem Termelés" fill="#10b981" radius={[3,3,0,0]} />
+                          <Bar dataKey="grid" name="Hálózati Vételezés" fill="#ef4444" radius={[3,3,0,0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  )}
+
+                  {evEfficiencyData.length > 0 && (
+                    <div className="ui-widget-card">
+                      <h3 className="card-heading-clean">🚗 Autó Fogyasztási & Km-Költség Trend</h3>
+                      <ResponsiveContainer width="100%" height={220}>
+                        <ComposedChart data={evEfficiencyData} margin={{ top: 10, right: 15, left: 10, bottom: 0 }}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                          <XAxis dataKey="month" fontSize={11} stroke="#64748b" tickLine={false} />
+                          <YAxis yAxisId="left" fontSize={11} stroke="#8b5cf6" tickLine={false} axisLine={false} width={45} label={{ value: 'kWh/100km', angle: -90, position: 'insideLeft', style: { fontSize: '10px', fill: '#8b5cf6' } }} />
+                          <YAxis yAxisId="right" orientation="right" fontSize={11} stroke="#10b981" tickLine={false} axisLine={false} width={45} label={{ value: 'Ft/km', angle: 90, position: 'insideRight', style: { fontSize: '10px', fill: '#10b981' } }} />
+                          <Tooltip />
+                          <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
+                          <Bar yAxisId="left" dataKey="kwh100km" name="Fogyasztás (kWh/100km)" fill="#8b5cf6" radius={[3,3,0,0]} />
+                          <Line yAxisId="right" type="monotone" dataKey="ftKm" name="Költség (Ft/km)" stroke="#10b981" strokeWidth={3} dot={{ r: 4 }} />
+                        </ComposedChart>
+                      </ResponsiveContainer>
+                    </div>
+                  )}
+
+                  <div className="ui-widget-card scrollable-list" style={{ maxHeight: '250px' }}>
+                    <h3 className="card-heading-clean">☀️ Historikus Napelem & Áram Referenciák</h3>
+                    <div className="modern-data-table-stack">
+                      {benchmarks.map((bm: any) => {
+                        const totalCons = parseFloat(bm.total_consumed_kwh || 0);
+                        const gridKwh = parseFloat(bm.grid_kwh || 0);
+                        const savedKwh = Math.max(0, totalCons - gridKwh);
+
+                        return (
+                          <div key={bm.id || bm.month} className="table-row-card" style={{ padding: '8px 12px' }}>
+                            <div>
+                              <div style={{ fontWeight: 700, fontSize: '0.9rem' }}>{bm.month}</div>
+                              <div style={{ fontSize: '0.75rem', color: '#64748b' }}>
+                                Benzin: {bm.gasoline_price} Ft/l • Fogyasztás: {totalCons} kWh (Hálózat: {gridKwh} kWh)
+                              </div>
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                              <div style={{ textAlign: 'right' }}>
+                                <div style={{ fontWeight: 700, fontSize: '0.85rem' }} className="font-emerald">Megspórolt: {savedKwh.toFixed(1)} kWh</div>
+                                <div style={{ fontSize: '0.75rem', color: '#64748b' }}>Termelt: {bm.solar_kwh || 0} kWh</div>
+                              </div>
+                              {!isReadOnly && (
+                                <div className="row-buttons-trigger">
+                                  <button onClick={() => handleEditBenchmark(bm)}>✏️</button>
+                                  <button onClick={async () => { if(window.confirm(`Biztosan törlöd a ${bm.month} havi referenciát?`)) { await fetch(`${BACKEND_URL}/api/benchmarks/${bm.id}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${user.token}` } }); fetchAll(user.token); } }}>❌</button>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                      {benchmarks.length === 0 && <div className="empty-state-text">Még nincs rögzített havi referencia.</div>}
+                    </div>
+                  </div>
+
+                  <div className="dashboard-layout-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
+                    <div className="ui-widget-card">
+                      <h3 className="card-heading-clean">🎯 Töltőhelyek Megoszlása (kWh)</h3>
+                      <ResponsiveContainer width="100%" height={220}>
+                        <PieChart>
+                          <Pie data={roiMetrics.locationPieData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={70} label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}>
+                            {roiMetrics.locationPieData.map((_, idx) => (
+                              <Cell key={`cell-${idx}`} fill={PIE_COLORS[idx % PIE_COLORS.length]} />
+                            ))}
+                          </Pie>
+                          <Tooltip formatter={(val) => `${val} kWh`} />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    </div>
+
+                    <div className="ui-widget-card scrollable-list" style={{ maxHeight: '280px' }}>
+                      <h3 className="card-heading-clean">📜 Töltési Napló (Szerkeszthető)</h3>
+                      <div className="modern-data-table-stack">
+                        {evLogs.map((log: any) => (
+                          <div key={log.id} className="table-row-card" style={{ padding: '8px 12px' }}>
+                            <div>
+                              <div style={{ fontWeight: 700, fontSize: '0.85rem' }}>{log.location} ({log.charge_source})</div>
+                              <div style={{ fontSize: '0.75rem', color: '#64748b' }}>
+                                {String(log.date).substring(0, 10)} 
+                                {log.start_soc !== null && log.end_soc !== null ? ` • ${log.start_soc}% ➔ ${log.end_soc}%` : ''} 
+                                {log.driven_km ? ` • ${log.driven_km} km` : ''}
+                              </div>
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                              <div style={{ textAlign: 'right' }}>
+                                <div style={{ fontWeight: 700, fontSize: '0.85rem' }} className="font-emerald">{log.kwh_amount} kWh</div>
+                                <div style={{ fontSize: '0.75rem', color: '#64748b' }}>{parseFloat(log.cost_huf).toLocaleString()} Ft</div>
+                              </div>
+                              {!isReadOnly && (
+                                <div className="row-buttons-trigger">
+                                  <button onClick={() => handleEditEvLog(log)}>✏️</button>
+                                  <button onClick={async () => { if(window.confirm("Biztosan törlöd a töltést?")) { await fetch(`${BACKEND_URL}/api/ev-logs/${log.id}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${user.token}` } }); fetchAll(user.token); } }}>❌</button>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                </section>
+              </div>
+            ) : (
+              <div className="ui-widget-card" style={{ padding: '50px 20px', textAlign: 'center' }}>
+                <span style={{ fontSize: '3rem' }}>⚡</span>
+                <h3 style={{ marginTop: '10px' }}>Nincs elérhető eszköz</h3>
+                <p style={{ color: 'var(--text-muted)', maxWidth: '500px', margin: '10px auto 0 auto' }}>
+                  A megtérülési és EV töltési adatok követéséhez hozz létre egy eszközt (ingatlant vagy járművet) a <b>Beállítások</b> fülön!
+                </p>
+              </div>
+            )
+          )}
+
+          {/* ================= TAB 4: TRANZAKCIÓK ================= */}
+          {activeTab === 'transactions' && (
+            <div className="fullwidth-list-view">
+              <div className="list-title-header-row">
+                <h3>Tranzakciók keresése és kezelése</h3>
+              </div>
+
+              <div className="ui-widget-card search-filter-card-wrapper">
+                <div className="search-filter-grid-layout">
+                  <input 
+                    type="text" 
+                    placeholder="🔍 Keresés típusra, eszközre vagy értékre..." 
+                    value={txSearch} 
+                    onChange={(e) => setTxSearch(e.target.value)} 
+                    className="form-control-select"
+                  />
+                  <select value={txAssetFilter} onChange={(e) => setTxAssetFilter(e.target.value)} className="form-control-select">
+                    <option value="all">Minden eszköz szűrése</option>
+                    {assets.map((a: any) => (<option key={a.Id} value={String(a.Id)}>{a.FriendlyName}</option>))}
+                  </select>
+                  <select value={txCategoryFilter} onChange={(e) => setTxCategoryFilter(e.target.value)} className="form-control-select">
+                    <option value="all">Minden kategória szűrése</option>
+                    {categories.map((c: any) => (<option key={c.Id} value={c.Name}>{c.Icon} {c.Name}</option>))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="modern-data-table-stack">
+                {filteredCombinedList.map((item: any, idx) => {
+                  const asset = assets.find(a => String(a.Id) === String(item.AssetId));
+                  const isInc = categories.find(c => c.Name === item.Type)?.Type === 'income';
+                  return (
+                    <div key={idx} className="table-row-card">
+                      <div className="row-left-info">
+                        <span className="row-badge-type">{item.lType === 'meter' ? '📟 Óra' : '💰 Számla'}</span>
+                        <div>
+                          <div className="row-main-title">{getIcon(item.Type)} {item.Type}</div>
+                          <div className="row-sub-title">{asset ? asset.FriendlyName : 'Ismeretlen'} • {String(item.d).substring(0, 10)}</div>
+                        </div>
+                      </div>
+                      <div className="row-right-actions">
+                        <span className={`row-value-text ${isInc ? 'green' : 'expense-dark'}`}>{isInc ? '+' : ''}{parseFloat(item.Value).toLocaleString()} {item.lType === 'meter' ? 'egység' : 'Ft'}</span>
+                        {!isReadOnly && (
+                          <div className="row-buttons-trigger">
+                            <button onClick={() => handleEditRecord(item)}>✏️</button>
+                            <button onClick={async () => { if(window.confirm("Biztosan törlöd?")) { await fetch(`${BACKEND_URL}/api/${item.lType === 'meter' ? 'records' : 'invoices'}/${item.Id || item.id}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${user.token}` } }); fetchAll(user.token); } }}>❌</button>
                           </div>
                         )}
                       </div>
                     </div>
+                  );
+                })}
+                {filteredCombinedList.length === 0 && <div className="empty-state-text">Nincs a szűrésnek megfelelő tranzakció az adatbázisban.</div>}
+              </div>
+            </div>
+          )}
+
+          {/* ================= TAB 5: BEÁLLÍTÁSOK ================= */}
+          {activeTab === 'settings' && (
+            <div className="settings-split-dashboard">
+              <div className="ui-widget-card grid-span-full">
+                <h3 className="section-title-accent">⚙️ Eszközökhöz tartozó kategóriák beállítása (Adatbázis mátrix)</h3>
+                <p className="section-explain-text">Kattints egy eszközre a bal oldalon, majd a jobb oldali rácsban pipáld be azokat a kategóriákat, amik engedélyezettek hozzá.</p>
+                
+                <div className="matrix-control-wrapper">
+                  <div className="matrix-left-asset-list">
+                    {assets.map((a: any) => (
+                      <button 
+                        key={a.Id} 
+                        className={`matrix-asset-sidebar-item ${matrixSelectedAssetId === String(a.Id) ? 'active' : ''}`}
+                        onClick={() => setMatrixSelectedAssetId(String(a.Id))}
+                      >
+                        <span>{a.Category === 'car' ? '🚗' : a.Category === 'person' ? '👤' : '🏠'} {a.FriendlyName}</span>
+                        <small>({a.Category})</small>
+                      </button>
+                    ))}
                   </div>
 
-                  <div className="ui-widget-card">
-                    {assets.length > 0 ? (
-                      <ResponsiveContainer width="100%" height={320}>
-                        <BarChart data={chartData} margin={{ top: 10, right: 15, left: 10, bottom: 0 }}>
-                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                          <XAxis dataKey="label" fontSize={11} stroke="#64748b" tickLine={false} />
-                          <YAxis 
-                            fontSize={11} 
-                            stroke="#64748b" 
-                            tickLine={false} 
-                            axisLine={false} 
-                            width={65}
-                            tickFormatter={(val) => val >= 1000 ? `${(val / 1000).toLocaleString()}k` : val}
-                          />
-                          <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(0,0,0,0.01)' }} />
-                          <Legend content={renderCustomLegend} />
-                          
-                          {(selectedAssetId === 'all' ? assets : assets.filter(a => String(a.Id) === String(selectedAssetId))).map((asset, idx) => {
-                            const color = ASSET_COLORS[idx % ASSET_COLORS.length];
+                  <div className="matrix-right-checkbox-panel">
+                    {matrixSelectedAssetId ? (
+                      <>
+                        <h4>Engedélyezett típusok ehhez: <span className="highlight-blue">{assets.find(a => String(a.Id) === matrixSelectedAssetId)?.FriendlyName}</span></h4>
+                        <div className="checkbox-toggles-flex-grid">
+                          {categories.map((c: any) => {
+                            const isChecked = (assetCategoryMap[matrixSelectedAssetId] || []).includes(c.Name);
                             return (
-                              <React.Fragment key={asset.Id}>
-                                <Bar dataKey={asset.FriendlyName} name={asset.FriendlyName} stackId="expense" fill={color} radius={[3,3,0,0]} />
-                                <Bar 
-                                  dataKey={`${asset.FriendlyName}_income`} 
-                                  name={`${asset.FriendlyName} (Bevétel)`} 
-                                  stackId="income" 
-                                  fill={color} 
-                                  opacity={0.45} 
-                                  radius={[3,3,0,0]}
+                              <label key={c.Id} className={`checkbox-matrix-tile ${isChecked ? 'selected' : ''}`}>
+                                <input 
+                                  type="checkbox" 
+                                  checked={isChecked} 
+                                  onChange={() => handleToggleCategoryForAsset(matrixSelectedAssetId, c.Name)}
                                 />
-                              </React.Fragment>
+                                <span className="tile-icon">{c.Icon}</span>
+                                <span className="tile-name">{c.Name}</span>
+                              </label>
                             );
                           })}
-                        </BarChart>
-                      </ResponsiveContainer>
-                    ) : (
-                      <div className="empty-state-text" style={{ padding: '40px 20px' }}>
-                        <h3>🌐 Nincs megjeleníthető adat</h3>
-                        <p>Még nincs eszköz rögzítve ehhez a fiókhoz. Lépj a <b>Beállítások</b> fülre új eszköz hozzáadásához!</p>
-                      </div>
-                    )}
-                  </div>
-                </section>
-              </div>
-            )}
-
-            {/* ================= TAB 2: ALBÉRLET KEZELÉS ================= */}
-            {activeTab === 'rental' && (
-              propertyAssets.length > 0 ? (
-                <div className="dashboard-layout-grid">
-                  <aside className="sidebar-container">
-                    <div className="ui-widget-card">
-                      <label className="input-label-flat">Ingatlan Kiválasztása</label>
-                      <select className="form-control-select" value={selectedRentalAssetId} onChange={(e) => setSelectedRentalAssetId(e.target.value)}>
-                        {propertyAssets.map((a: any) => (
-                          <option key={a.Id} value={String(a.Id)}>🏠 {a.FriendlyName}</option>
-                        ))}
-                      </select>
-                    </div>
-
-                    {!isReadOnly && (
-                      <div className="ui-widget-card">
-                        <h3 className="card-heading-clean">⚙️ Szerződés & Bérlő beállítása</h3>
-                        <div className="form-stack-vertical">
-                          <div>
-                            <label className="input-label-flat">Bérlő Google E-mail Címe</label>
-                            <input 
-                              type="email" 
-                              className="form-control-select" 
-                              placeholder="berlo@gmail.com" 
-                              value={rentalContractForm.tenantEmail} 
-                              onChange={(e) => setRentalContractForm({...rentalContractForm, tenantEmail: e.target.value})} 
-                            />
-                          </div>
-                          <div style={{ display: 'flex', gap: '8px' }}>
-                            <div style={{ flex: 1 }}>
-                              <label className="input-label-flat">Havi Bérleti Díj (Ft)</label>
-                              <input type="number" className="form-control-select" value={rentalContractForm.monthlyRent} onChange={(e) => setRentalContractForm({...rentalContractForm, monthlyRent: e.target.value})} />
-                            </div>
-                            <div style={{ flex: 1 }}>
-                              <label className="input-label-flat">Kaució (Ft)</label>
-                              <input type="number" className="form-control-select" value={rentalContractForm.depositAmount} onChange={(e) => setRentalContractForm({...rentalContractForm, depositAmount: e.target.value})} />
-                            </div>
-                          </div>
-                          <button className="btn-action-primary" onClick={handleSaveRentalContract}>Szerződés & Megosztás Mentése</button>
-                        </div>
-                      </div>
-                    )}
-
-                    {!isReadOnly && (
-                      <div className="ui-widget-card">
-                        <h3 className="card-heading-clean">💵 Befizetés Rögzítése</h3>
-                        <div className="form-stack-vertical">
-                          <div>
-                            <label className="input-label-flat">Elszámolási Hónap</label>
-                            <input type="month" className="form-control-select" value={rentalPaymentForm.month} onChange={(e) => setRentalPaymentForm({...rentalPaymentForm, month: e.target.value})} />
-                          </div>
-                          <div style={{ display: 'flex', gap: '8px' }}>
-                            <div style={{ flex: 1 }}>
-                              <label className="input-label-flat">Befizetett Bérleti Díj</label>
-                              <input type="number" className="form-control-select" value={rentalPaymentForm.rentPaid} onChange={(e) => setRentalPaymentForm({...rentalPaymentForm, rentPaid: e.target.value})} />
-                            </div>
-                            <div style={{ flex: 1 }}>
-                              <label className="input-label-flat">Befizetett Rezsi</label>
-                              <input type="number" className="form-control-select" value={rentalPaymentForm.utilitiesPaid} onChange={(e) => setRentalPaymentForm({...rentalPaymentForm, utilitiesPaid: e.target.value})} />
-                            </div>
-                          </div>
-                          <div>
-                            <label className="input-label-flat">Fizetés Dátuma</label>
-                            <input type="date" className="form-control-select" value={rentalPaymentForm.paymentDate} onChange={(e) => setRentalPaymentForm({...rentalPaymentForm, paymentDate: e.target.value})} />
-                          </div>
-                          <button className="btn-submit-form" onClick={handleSaveRentalPayment}>Befizetés Rögzítése</button>
-                        </div>
-                      </div>
-                    )}
-                  </aside>
-
-                  <section className="main-viewport-pane">
-                    {rentalCalculation && (
-                      <>
-                        <div className="kpi-cards-flex-grid">
-                          <div className="ui-widget-card kpi-tile">
-                            <span className="kpi-label">Kaució</span>
-                            <span className="kpi-value">{parseFloat(rentalCalculation.contract?.deposit_amount || 0).toLocaleString()} Ft</span>
-                            <small className="kpi-sub">Bérlő: {rentalCalculation.contract?.tenant_email || 'Nincs megadva'}</small>
-                          </div>
-
-                          <div className="ui-widget-card kpi-tile">
-                            <span className="kpi-label">Havi Bérleti Díj</span>
-                            <span className="kpi-value font-emerald">{parseFloat(rentalCalculation.contract?.monthly_rent || 0).toLocaleString()} Ft/hó</span>
-                            <small className="kpi-sub">Szerződéses alapdíj</small>
-                          </div>
-
-                          <div className="ui-widget-card kpi-tile">
-                            <span className="kpi-label">Göngyölített Egyenleg</span>
-                            <span className="kpi-value" style={{ color: rentalCalculation.totalBalance >= 0 ? '#10b981' : '#ef4444' }}>
-                              {rentalCalculation.totalBalance >= 0 ? '+' : ''}{Math.round(rentalCalculation.totalBalance).toLocaleString()} Ft
-                            </span>
-                            <small className="kpi-sub">{rentalCalculation.totalBalance >= 0 ? 'Túlfizetés' : 'Elmaradás / Hátralék'}</small>
-                          </div>
-                        </div>
-
-                        <div className="ui-widget-card scrollable-list" style={{ maxHeight: '500px' }}>
-                          <h3 className="card-heading-clean">📋 Havi Rezsi + Bérleti Díj Elszámolás</h3>
-                          {rentalCalculation.monthlyBreakdown.length > 0 ? (
-                            <div className="modern-data-table-stack">
-                              {rentalCalculation.monthlyBreakdown.map((row: any) => (
-                                <div key={row.month} className="table-row-card" style={{ padding: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                  <div>
-                                    <div style={{ fontWeight: 800, fontSize: '1rem' }}>{row.month}</div>
-                                    <div style={{ fontSize: '0.8rem', color: '#64748b' }}>
-                                      Rezsi: {Math.round(row.utilitiesCost).toLocaleString()} Ft • Bérleti díj: {Math.round(row.rentCost).toLocaleString()} Ft
-                                    </div>
-                                  </div>
-                                  
-                                  <div style={{ textAlign: 'right' }}>
-                                    <div style={{ fontWeight: 800, fontSize: '0.95rem' }}>
-                                      Fizetendő: <span style={{ color: '#0f172a' }}>{Math.round(row.monthDue).toLocaleString()} Ft</span>
-                                    </div>
-                                    <div style={{ fontSize: '0.8rem' }}>
-                                      Befizetve: <span className="font-emerald">{Math.round(row.monthPaid).toLocaleString()} Ft</span> 
-                                      {row.diff !== 0 && (
-                                        <span style={{ color: row.diff > 0 ? '#10b981' : '#ef4444', marginLeft: '6px', fontWeight: 700 }}>
-                                          ({row.diff > 0 ? '+' : ''}{Math.round(row.diff).toLocaleString()} Ft)
-                                        </span>
-                                      )}
-                                    </div>
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          ) : (
-                            <div className="empty-state-text">Még nincs elszámolás ehhez az ingatlanhoz.</div>
-                          )}
                         </div>
                       </>
+                    ) : (
+                      <div className="empty-state-text">Válassz egy eszközt a bal oldali listából a kategóriák hozzárendeléséhez.</div>
                     )}
-                  </section>
+                  </div>
                 </div>
-              ) : (
-                <div className="ui-widget-card" style={{ padding: '50px 20px', textAlign: 'center' }}>
-                  <span style={{ fontSize: '3rem' }}>🔒</span>
-                  <h3 style={{ marginTop: '10px' }}>Nincs ingatlan hozzárendelve</h3>
-                  <p style={{ color: 'var(--text-muted)', maxWidth: '500px', margin: '10px auto 0 auto' }}>
-                    Ehhez a fiókhoz még nincs ingatlan rögzítve vagy megosztva. Ha te vagy a tulajdonos, adj hozzá egy ingatlant a <b>Beállítások</b> fülön!
-                  </p>
-                </div>
-              )
-            )}
+              </div>
 
-            {/* ================= TAB 3: MEGTÉRÜLÉS & EV TÖLTÉS ================= */}
-            {activeTab === 'ev-solar' && (
-              assets.length > 0 ? (
-                <div className="dashboard-layout-grid">
-                  <aside className="sidebar-container">
-                    {!isReadOnly && (
-                      <div className="ui-widget-card">
-                        <h3 className="card-heading-clean">{editingEvLogId ? "✏️ EV Töltés szerkesztése" : "🔌 Új EV Töltés rögzítése"}</h3>
-                        <div className="form-stack-vertical">
-                          <div>
-                            <label className="input-label-flat">Dátum</label>
-                            <input type="date" className="form-control-select" value={newEvLog.date} onChange={(e) => setNewEvLog({...newEvLog, date: e.target.value})} />
-                          </div>
-                          
-                          <div>
-                            <label className="input-label-flat">Töltőhely (Szabadon beírható)</label>
-                            <input 
-                              type="text" 
-                              list="charging-locations-list" 
-                              className="form-control-select" 
-                              placeholder="pl. Napelem, Tesla, Ionity..." 
-                              value={newEvLog.location} 
-                              onChange={(e) => setNewEvLog({...newEvLog, location: e.target.value})} 
-                            />
-                          </div>
-
-                          <div>
-                            <label className="input-label-flat">Töltési forrás</label>
-                            <select className="form-control-select" value={newEvLog.charge_source} onChange={(e) => setNewEvLog({...newEvLog, charge_source: e.target.value})}>
-                              <option value="Napelem">☀️ Napelem (Ingyenes)</option>
-                              <option value="Hálózat">🏠 Otthoni Hálózat</option>
-                              <option value="Nyilvános">⚡ Nyilvános Töltő</option>
-                            </select>
-                          </div>
-
-                          <div style={{ display: 'flex', gap: '8px' }}>
-                            <div style={{ flex: 1 }}>
-                              <label className="input-label-flat">Kezdő %</label>
-                              <input type="number" className="form-control-select" placeholder="pl. 25%" value={newEvLog.start_soc} onChange={(e) => setNewEvLog({...newEvLog, start_soc: e.target.value})} />
-                            </div>
-                            <div style={{ flex: 1 }}>
-                              <label className="input-label-flat">Feltöltött %</label>
-                              <input type="number" className="form-control-select" placeholder="pl. 80%" value={newEvLog.end_soc} onChange={(e) => setNewEvLog({...newEvLog, end_soc: e.target.value})} />
-                            </div>
-                          </div>
-
-                          <div style={{ display: 'flex', gap: '8px' }}>
-                            <div style={{ flex: 1 }}>
-                              <label className="input-label-flat">Betöltött kWh</label>
-                              <input type="number" step="0.01" className="form-control-select" placeholder="kWh" value={newEvLog.kwh_amount} onChange={(e) => setNewEvLog({...newEvLog, kwh_amount: e.target.value})} />
-                            </div>
-                            <div style={{ flex: 1 }}>
-                              <label className="input-label-flat">Költség (Ft)</label>
-                              <input type="number" className="form-control-select" placeholder="Ft" value={newEvLog.cost_huf} onChange={(e) => setNewEvLog({...newEvLog, cost_huf: e.target.value})} />
-                            </div>
-                          </div>
-
-                          <div>
-                            <label className="input-label-flat">Megtett KM (utolsó töltés óta)</label>
-                            <input type="number" className="form-control-select" placeholder="pl. 150 km" value={newEvLog.driven_km} onChange={(e) => setNewEvLog({...newEvLog, driven_km: e.target.value})} />
-                          </div>
-
-                          <div className="action-buttons-row">
-                            <button className="btn-submit-form" onClick={handleEvLogSave}>
-                              {editingEvLogId ? 'Módosítás mentése' : 'Töltés mentése'}
-                            </button>
-                            {editingEvLogId && <button className="btn-action-primary" style={{backgroundColor: '#64748b'}} onClick={cancelEvLogEdit}>Mégse</button>}
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {!isReadOnly && (
-                      <div className="ui-widget-card">
-                        <h3 className="card-heading-clean">☀️ Napelem & Áram Referencia</h3>
-                        <div className="form-stack-vertical">
-                          <div>
-                            <label className="input-label-flat">Hónap Kiválasztása</label>
-                            <input 
-                              type="month" 
-                              className="form-control-select" 
-                              value={benchmarkForm.month} 
-                              onChange={(e) => handleBenchmarkMonthChange(e.target.value)} 
-                            />
-                          </div>
-
-                          <div>
-                            <label className="input-label-flat">Összes Háztartási Fogyasztás (kWh)</label>
-                            <input type="number" step="0.1" className="form-control-select" placeholder="pl. 325 kWh" value={benchmarkForm.total_consumed_kwh} onChange={(e) => setBenchmarkForm({...benchmarkForm, total_consumed_kwh: e.target.value})} />
-                          </div>
-                          
-                          <div style={{ display: 'flex', gap: '8px' }}>
-                            <div style={{ flex: 1 }}>
-                              <label className="input-label-flat">Napelem Termelés (kWh)</label>
-                              <input type="number" step="0.1" className="form-control-select" placeholder="kWh" value={benchmarkForm.solar_kwh} onChange={(e) => setBenchmarkForm({...benchmarkForm, solar_kwh: e.target.value})} />
-                            </div>
-                            <div style={{ flex: 1 }}>
-                              <label className="input-label-flat">Hálózati Vételezés (kWh)</label>
-                              <input type="number" step="0.1" className="form-control-select" placeholder="kWh" value={benchmarkForm.grid_kwh} onChange={(e) => setBenchmarkForm({...benchmarkForm, grid_kwh: e.target.value})} />
-                            </div>
-                          </div>
-
-                          <div style={{ display: 'flex', gap: '8px' }}>
-                            <div style={{ flex: 1 }}>
-                              <label className="input-label-flat">Benzinár (Ft/l)</label>
-                              <input type="number" className="form-control-select" value={benchmarkForm.gasoline_price} onChange={(e) => setBenchmarkForm({...benchmarkForm, gasoline_price: e.target.value})} />
-                            </div>
-                            <div style={{ flex: 1 }}>
-                              <label className="input-label-flat">Ref. Fogy. (l/100km)</label>
-                              <input type="number" step="0.1" className="form-control-select" value={benchmarkForm.avg_consumption} onChange={(e) => setBenchmarkForm({...benchmarkForm, avg_consumption: e.target.value})} />
-                            </div>
-                          </div>
-
-                          <div>
-                            <label className="input-label-flat">Napelem Beruházás (Ft)</label>
-                            <input type="number" className="form-control-select" value={benchmarkForm.solar_investment} onChange={(e) => setBenchmarkForm({...benchmarkForm, solar_investment: e.target.value})} />
-                          </div>
-
-                          <button className="btn-action-primary" onClick={handleBenchmarkSave}>Adatok mentése ehhez a hónaphoz</button>
-                        </div>
-                      </div>
-                    )}
-                  </aside>
-
-                  <section className="main-viewport-pane">
-                    <div className="kpi-cards-flex-grid">
-                      <div className="ui-widget-card kpi-tile">
-                        <span className="kpi-label">Zöld Áram Arány</span>
-                        <span className="kpi-value font-emerald">{roiMetrics.greenRatio.toFixed(1)}%</span>
-                        <small className="kpi-sub">{roiMetrics.solarKwh.toFixed(1)} kWh napelemből</small>
-                      </div>
-
-                      <div className="ui-widget-card kpi-tile">
-                        <span className="kpi-label">EV Költség / KM</span>
-                        <span className="kpi-value">{roiMetrics.costPerKm.toFixed(1)} Ft/km</span>
-                        <small className="kpi-sub">Megtett: {roiMetrics.totalKm.toLocaleString()} km</small>
-                      </div>
-
-                      <div className="ui-widget-card kpi-tile">
-                        <span className="kpi-label">Összes Megtakarítás</span>
-                        <span className="kpi-value font-emerald">+{Math.round(roiMetrics.totalSavingsHuf).toLocaleString()} Ft</span>
-                        <small className="kpi-sub">EV: {Math.round(roiMetrics.evSavingsHuf).toLocaleString()} Ft | Áram: {Math.round(roiMetrics.solarHouseholdSavingsHuf).toLocaleString()} Ft</small>
-                      </div>
-
-                      <div className="ui-widget-card kpi-tile">
-                        <span className="kpi-label">Megtérülési Egyenleg</span>
-                        <span className="kpi-value" style={{ color: roiMetrics.currentBalance >= 0 ? '#10b981' : '#ef4444' }}>
-                          {roiMetrics.currentBalance >= 0 ? '+' : ''}{Math.round(roiMetrics.currentBalance).toLocaleString()} Ft
-                        </span>
-                        <small className="kpi-sub">Beruházás: {Math.round(roiMetrics.totalInvestment).toLocaleString()} Ft</small>
-                      </div>
-                    </div>
-
-                    <div className="ui-widget-card">
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                        <h3 className="card-heading-clean" style={{ margin: 0 }}>📊 Várható Megtérülés: <span className="highlight-blue">{roiMetrics.estimatedPaybackDate}</span></h3>
-                        <span className="row-badge-type">Napi átlag: +{Math.round(roiMetrics.dailySavingsHuf).toLocaleString()} Ft/nap</span>
-                      </div>
-
-                      <div className="roi-progress-wrapper">
-                        <div className="roi-progress-bar" style={{ width: `${Math.min(100, Math.max(0, (roiMetrics.totalSavingsHuf / (roiMetrics.totalInvestment || 1)) * 100))}%` }} />
-                      </div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '8px', fontSize: '0.8rem', color: '#64748b' }}>
-                        <span>Eltelt napok: {roiMetrics.elapsedDays} nap</span>
-                        <span>Hátralévő napok: {roiMetrics.remainingDays} nap</span>
-                      </div>
-                    </div>
-
-                    {solarEnergyBalanceData.length > 0 && (
-                      <div className="ui-widget-card">
-                        <h3 className="card-heading-clean">☀️ Havi Energia Mérleg (kWh)</h3>
-                        <ResponsiveContainer width="100%" height={240}>
-                          <BarChart data={solarEnergyBalanceData} margin={{ top: 10, right: 15, left: 10, bottom: 0 }}>
-                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                            <XAxis dataKey="month" fontSize={11} stroke="#64748b" tickLine={false} />
-                            <YAxis fontSize={11} stroke="#64748b" tickLine={false} axisLine={false} width={45} />
-                            <Tooltip />
-                            <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
-                            <Bar dataKey="consumed" name="Összes Fogyasztás" fill="#3b82f6" radius={[3,3,0,0]} />
-                            <Bar dataKey="solar" name="Napelem Termelés" fill="#10b981" radius={[3,3,0,0]} />
-                            <Bar dataKey="grid" name="Hálózati Vételezés" fill="#ef4444" radius={[3,3,0,0]} />
-                          </BarChart>
-                        </ResponsiveContainer>
-                      </div>
-                    )}
-
-                    {evEfficiencyData.length > 0 && (
-                      <div className="ui-widget-card">
-                        <h3 className="card-heading-clean">🚗 Autó Fogyasztási & Km-Költség Trend</h3>
-                        <ResponsiveContainer width="100%" height={220}>
-                          <ComposedChart data={evEfficiencyData} margin={{ top: 10, right: 15, left: 10, bottom: 0 }}>
-                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                            <XAxis dataKey="month" fontSize={11} stroke="#64748b" tickLine={false} />
-                            <YAxis yAxisId="left" fontSize={11} stroke="#8b5cf6" tickLine={false} axisLine={false} width={45} label={{ value: 'kWh/100km', angle: -90, position: 'insideLeft', style: { fontSize: '10px', fill: '#8b5cf6' } }} />
-                            <YAxis yAxisId="right" orientation="right" fontSize={11} stroke="#10b981" tickLine={false} axisLine={false} width={45} label={{ value: 'Ft/km', angle: 90, position: 'insideRight', style: { fontSize: '10px', fill: '#10b981' } }} />
-                            <Tooltip />
-                            <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
-                            <Bar yAxisId="left" dataKey="kwh100km" name="Fogyasztás (kWh/100km)" fill="#8b5cf6" radius={[3,3,0,0]} />
-                            <Line yAxisId="right" type="monotone" dataKey="ftKm" name="Költség (Ft/km)" stroke="#10b981" strokeWidth={3} dot={{ r: 4 }} />
-                          </ComposedChart>
-                        </ResponsiveContainer>
-                      </div>
-                    )}
-
-                    <div className="ui-widget-card scrollable-list" style={{ maxHeight: '250px' }}>
-                      <h3 className="card-heading-clean">☀️ Historikus Napelem & Áram Referenciák</h3>
-                      <div className="modern-data-table-stack">
-                        {benchmarks.map((bm: any) => {
-                          const totalCons = parseFloat(bm.total_consumed_kwh || 0);
-                          const gridKwh = parseFloat(bm.grid_kwh || 0);
-                          const savedKwh = Math.max(0, totalCons - gridKwh);
-
-                          return (
-                            <div key={bm.id || bm.month} className="table-row-card" style={{ padding: '8px 12px' }}>
-                              <div>
-                                <div style={{ fontWeight: 700, fontSize: '0.9rem' }}>{bm.month}</div>
-                                <div style={{ fontSize: '0.75rem', color: '#64748b' }}>
-                                  Benzin: {bm.gasoline_price} Ft/l • Fogyasztás: {totalCons} kWh (Hálózat: {gridKwh} kWh)
-                                </div>
-                              </div>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                                <div style={{ textAlign: 'right' }}>
-                                  <div style={{ fontWeight: 700, fontSize: '0.85rem' }} className="font-emerald">Megspórolt: {savedKwh.toFixed(1)} kWh</div>
-                                  <div style={{ fontSize: '0.75rem', color: '#64748b' }}>Termelt: {bm.solar_kwh || 0} kWh</div>
-                                </div>
-                                {!isReadOnly && (
-                                  <div className="row-buttons-trigger">
-                                    <button onClick={() => handleEditBenchmark(bm)}>✏️</button>
-                                    <button onClick={async () => { if(window.confirm(`Biztosan törlöd a ${bm.month} havi referenciát?`)) { await fetch(`${BACKEND_URL}/api/benchmarks/${bm.id}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${user.token}` } }); fetchAll(user.token); } }}>❌</button>
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                          );
-                        })}
-                        {benchmarks.length === 0 && <div className="empty-state-text">Még nincs rögzített havi referencia.</div>}
-                      </div>
-                    </div>
-
-                    <div className="dashboard-layout-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
-                      <div className="ui-widget-card">
-                        <h3 className="card-heading-clean">🎯 Töltőhelyek Megoszlása (kWh)</h3>
-                        <ResponsiveContainer width="100%" height={220}>
-                          <PieChart>
-                            <Pie data={roiMetrics.locationPieData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={70} label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}>
-                              {roiMetrics.locationPieData.map((_, idx) => (
-                                <Cell key={`cell-${idx}`} fill={PIE_COLORS[idx % PIE_COLORS.length]} />
-                              ))}
-                            </Pie>
-                            <Tooltip formatter={(val) => `${val} kWh`} />
-                          </PieChart>
-                        </ResponsiveContainer>
-                      </div>
-
-                      <div className="ui-widget-card scrollable-list" style={{ maxHeight: '280px' }}>
-                        <h3 className="card-heading-clean">📜 Töltési Napló (Szerkeszthető)</h3>
-                        <div className="modern-data-table-stack">
-                          {evLogs.map((log: any) => (
-                            <div key={log.id} className="table-row-card" style={{ padding: '8px 12px' }}>
-                              <div>
-                                <div style={{ fontWeight: 700, fontSize: '0.85rem' }}>{log.location} ({log.charge_source})</div>
-                                <div style={{ fontSize: '0.75rem', color: '#64748b' }}>
-                                  {String(log.date).substring(0, 10)} 
-                                  {log.start_soc !== null && log.end_soc !== null ? ` • ${log.start_soc}% ➔ ${log.end_soc}%` : ''} 
-                                  {log.driven_km ? ` • ${log.driven_km} km` : ''}
-                                </div>
-                              </div>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                <div style={{ textAlign: 'right' }}>
-                                  <div style={{ fontWeight: 700, fontSize: '0.85rem' }} className="font-emerald">{log.kwh_amount} kWh</div>
-                                  <div style={{ fontSize: '0.75rem', color: '#64748b' }}>{parseFloat(log.cost_huf).toLocaleString()} Ft</div>
-                                </div>
-                                {!isReadOnly && (
-                                  <div className="row-buttons-trigger">
-                                    <button onClick={() => handleEditEvLog(log)}>✏️</button>
-                                    <button onClick={async () => { if(window.confirm("Biztosan törlöd a töltést?")) { await fetch(`${BACKEND_URL}/api/ev-logs/${log.id}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${user.token}` } }); fetchAll(user.token); } }}>❌</button>
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-
-                  </section>
-                </div>
-              ) : (
-                <div className="ui-widget-card" style={{ padding: '50px 20px', textAlign: 'center' }}>
-                  <span style={{ fontSize: '3rem' }}>⚡</span>
-                  <h3 style={{ marginTop: '10px' }}>Nincs elérhető eszköz</h3>
-                  <p style={{ color: 'var(--text-muted)', maxWidth: '500px', margin: '10px auto 0 auto' }}>
-                    A megtérülési és EV töltési adatok követéséhez hozz létre egy eszközt (ingatlant vagy járművet) a <b>Beállítások</b> fülön!
-                  </p>
-                </div>
-              )
-            )}
-
-            {/* ================= TAB 4: TRANZAKCIÓK ================= */}
-            {activeTab === 'transactions' && (
-              <div className="fullwidth-list-view">
-                <div className="list-title-header-row">
-                  <h3>Tranzakciók keresése és kezelése</h3>
-                </div>
-
-                <div className="ui-widget-card search-filter-card-wrapper">
-                  <div className="search-filter-grid-layout">
+              <div className="ui-widget-card">
+                <h3 className="card-heading-clean">{editingCategoryId ? "✏️ Kategória szerkesztése" : "⚙️ Új kategória hozzáadása"}</h3>
+                <div className="vertical-form mt-2">
+                  <div style={{ display: 'flex', gap: '8px' }}>
                     <input 
-                      type="text" 
-                      placeholder="🔍 Keresés típusra, eszközre vagy értékre..." 
-                      value={txSearch} 
-                      onChange={(e) => setTxSearch(e.target.value)} 
-                      className="form-control-select"
+                      style={{ width: '70px' }} 
+                      className="form-control-select" 
+                      placeholder="Ikon" 
+                      value={newCategory.icon} 
+                      onChange={(e) => setNewCategory({...newCategory, icon: e.target.value})} 
                     />
-                    <select value={txAssetFilter} onChange={(e) => setTxAssetFilter(e.target.value)} className="form-control-select">
-                      <option value="all">Minden eszköz szűrése</option>
-                      {assets.map((a: any) => (<option key={a.Id} value={String(a.Id)}>{a.FriendlyName}</option>))}
-                    </select>
-                    <select value={txCategoryFilter} onChange={(e) => setTxCategoryFilter(e.target.value)} className="form-control-select">
-                      <option value="all">Minden kategória szűrése</option>
-                      {categories.map((c: any) => (<option key={c.Id} value={c.Name}>{c.Icon} {c.Name}</option>))}
-                    </select>
+                    <input 
+                      className="form-control-select" 
+                      placeholder="Kategória neve" 
+                      value={newCategory.name} 
+                      onChange={(e) => setNewCategory({...newCategory, name: e.target.value})} 
+                    />
+                  </div>
+                  <select className="form-control-select" value={newCategory.type} onChange={(e) => setNewCategory({...newCategory, type: e.target.value})}>
+                    <option value="both">📟 Óraállás + 💰 Számla (Kiadás)</option>
+                    <option value="invoice_only">Csak 💰 Számla (Kiadás)</option>
+                    <option value="income">💵 Bevétel (Csak Számla)</option>
+                  </select>
+                  
+                  {isAdmin && (
+                    <label className="checkbox-matrix-tile" style={{ padding: '8px 12px', background: 'transparent', border: 'none' }}>
+                      <input 
+                        type="checkbox" 
+                        checked={newCategory.isPublic} 
+                        onChange={(e) => setNewCategory({...newCategory, isPublic: e.target.checked})} 
+                      />
+                      <span style={{ fontSize: '0.85rem' }}>🌐 Publikus (Mindenki látja)</span>
+                    </label>
+                  )}
+                  
+                  <div className="action-buttons-row">
+                    <button className="btn-submit-form" onClick={handleCategorySave}>
+                      Kategória mentése
+                    </button>
+                    {editingCategoryId && (
+                      <button className="btn-action-primary" style={{ backgroundColor: '#64748b' }} onClick={() => { setEditingCategoryId(null); setNewCategory({ name: '', icon: '📄', type: 'both', isPublic: false }); }}>
+                        Mégse
+                      </button>
+                    )}
                   </div>
                 </div>
 
-                <div className="modern-data-table-stack">
-                  {filteredCombinedList.map((item: any, idx) => {
-                    const asset = assets.find(a => String(a.Id) === String(item.AssetId));
-                    const isInc = categories.find(c => c.Name === item.Type)?.Type === 'income';
+                <div className="shares-static-list mt-3 scrollable-list" style={{ maxHeight: '200px' }}>
+                  {categories.map((c: any) => {
+                    const isPublicCat = !c.UserId;
                     return (
-                      <div key={idx} className="table-row-card">
-                        <div className="row-left-info">
-                          <span className="row-badge-type">{item.lType === 'meter' ? '📟 Óra' : '💰 Számla'}</span>
-                          <div>
-                            <div className="row-main-title">{getIcon(item.Type)} {item.Type}</div>
-                            <div className="row-sub-title">{asset ? asset.FriendlyName : 'Ismeretlen'} • {String(item.d).substring(0, 10)}</div>
-                          </div>
-                        </div>
-                        <div className="row-right-actions">
-                          <span className={`row-value-text ${isInc ? 'green' : 'expense-dark'}`}>{isInc ? '+' : ''}{parseFloat(item.Value).toLocaleString()} {item.lType === 'meter' ? 'egység' : 'Ft'}</span>
-                          {!isReadOnly && (
-                            <div className="row-buttons-trigger">
-                              <button onClick={() => handleEditRecord(item)}>✏️</button>
-                              <button onClick={async () => { if(window.confirm("Biztosan törlöd?")) { await fetch(`${BACKEND_URL}/api/${item.lType === 'meter' ? 'records' : 'invoices'}/${item.Id || item.id}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${user.token}` } }); fetchAll(user.token); } }}>❌</button>
-                            </div>
+                      <div key={c.Id} className="share-list-row-item">
+                        <span style={{ fontWeight: 600 }}>{c.Icon} {c.Name} {isPublicCat ? '🌐 (Publikus)' : '🔒 (Privát)'}</span>
+                        <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                          <button className="flat-delete-btn" style={{ color: 'var(--accent)' }} onClick={() => { setEditingCategoryId(c.Id); setNewCategory({ name: c.Name, icon: c.Icon, type: c.Type, isPublic: isPublicCat }); }}>✏️</button>
+                          {(!isPublicCat || isAdmin) && (
+                            <button className="flat-delete-btn" onClick={() => handleCategoryDelete(c.Id)}>❌</button>
                           )}
                         </div>
                       </div>
                     );
                   })}
-                  {filteredCombinedList.length === 0 && <div className="empty-state-text">Nincs a szűrésnek megfelelő tranzakció az adatbázisban.</div>}
                 </div>
               </div>
-            )}
 
-            {/* ================= TAB 5: BEÁLLÍTÁSOK ================= */}
-            {activeTab === 'settings' && (
-              <div className="settings-split-dashboard">
-                <div className="ui-widget-card grid-span-full">
-                  <h3 className="section-title-accent">⚙️ Eszközökhöz tartozó kategóriák beállítása (Adatbázis mátrix)</h3>
-                  <p className="section-explain-text">Kattints egy eszközre a bal oldalon, majd a jobb oldali rácsban pipáld be azokat a kategóriákat, amik engedélyezettek hozzá.</p>
-                  
-                  <div className="matrix-control-wrapper">
-                    <div className="matrix-left-asset-list">
-                      {assets.map((a: any) => (
-                        <button 
-                          key={a.Id} 
-                          className={`matrix-asset-sidebar-item ${matrixSelectedAssetId === String(a.Id) ? 'active' : ''}`}
-                          onClick={() => setMatrixSelectedAssetId(String(a.Id))}
-                        >
-                          <span>{a.Category === 'car' ? '🚗' : a.Category === 'person' ? '👤' : '🏠'} {a.FriendlyName}</span>
-                          <small>({a.Category})</small>
-                        </button>
-                      ))}
-                    </div>
-
-                    <div className="matrix-right-checkbox-panel">
-                      {matrixSelectedAssetId ? (
-                        <>
-                          <h4>Engedélyezett típusok ehhez: <span className="highlight-blue">{assets.find(a => String(a.Id) === matrixSelectedAssetId)?.FriendlyName}</span></h4>
-                          <div className="checkbox-toggles-flex-grid">
-                            {categories.map((c: any) => {
-                              const isChecked = (assetCategoryMap[matrixSelectedAssetId] || []).includes(c.Name);
-                              return (
-                                <label key={c.Id} className={`checkbox-matrix-tile ${isChecked ? 'selected' : ''}`}>
-                                  <input 
-                                    type="checkbox" 
-                                    checked={isChecked} 
-                                    onChange={() => handleToggleCategoryForAsset(matrixSelectedAssetId, c.Name)}
-                                  />
-                                  <span className="tile-icon">{c.Icon}</span>
-                                  <span className="tile-name">{c.Name}</span>
-                                </label>
-                              );
-                            })}
-                          </div>
-                        </>
-                      ) : (
-                        <div className="empty-state-text">Válassz egy eszközt a bal oldali listából a kategóriák hozzárendeléséhez.</div>
-                      )}
-                    </div>
-                  </div>
+              <div className="ui-widget-card">
+                <h3 className="card-heading-clean">➕ Új eszköz / entitás hozzáadása</h3>
+                <div className="vertical-form mt-2">
+                  <select className="form-control-select" value={newAsset.category} onChange={(e) => setNewAsset({...newAsset, category: e.target.value})}>
+                    <option value="property">🏠 Ingatlan</option>
+                    <option value="car">🚗 Jármű</option>
+                    <option value="person">👤 Személy</option>
+                  </select>
+                  <input className="form-control-select" placeholder="Eszköz megnevezése (pl. Otthon, Toyota)" value={newAsset.friendlyName} onChange={(e) => setNewAsset({...newAsset, friendlyName: e.target.value})} />
+                  <button className="btn-action-primary" onClick={handleAssetSave}>Eszköz mentése</button>
                 </div>
-
-                <div className="ui-widget-card">
-                  <h3 className="card-heading-clean">{editingCategoryId ? "✏️ Kategória szerkesztése" : "⚙️ Új kategória hozzáadása"}</h3>
-                  <div className="vertical-form mt-2">
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                      <input 
-                        style={{ width: '70px' }} 
-                        className="form-control-select" 
-                        placeholder="Ikon" 
-                        value={newCategory.icon} 
-                        onChange={(e) => setNewCategory({...newCategory, icon: e.target.value})} 
-                      />
-                      <input 
-                        className="form-control-select" 
-                        placeholder="Kategória neve" 
-                        value={newCategory.name} 
-                        onChange={(e) => setNewCategory({...newCategory, name: e.target.value})} 
-                      />
-                    </div>
-                    <select className="form-control-select" value={newCategory.type} onChange={(e) => setNewCategory({...newCategory, type: e.target.value})}>
-                      <option value="both">📟 Óraállás + 💰 Számla (Kiadás)</option>
-                      <option value="invoice_only">Csak 💰 Számla (Kiadás)</option>
-                      <option value="income">💵 Bevétel (Csak Számla)</option>
-                    </select>
-                    
-                    {isAdmin && (
-                      <label className="checkbox-matrix-tile" style={{ padding: '8px 12px', background: 'transparent', border: 'none' }}>
-                        <input 
-                          type="checkbox" 
-                          checked={newCategory.isPublic} 
-                          onChange={(e) => setNewCategory({...newCategory, isPublic: e.target.checked})} 
-                        />
-                        <span style={{ fontSize: '0.85rem' }}>🌐 Publikus (Mindenki látja)</span>
-                      </label>
-                    )}
-                    
-                    <div className="action-buttons-row">
-                      <button className="btn-submit-form" onClick={handleCategorySave}>
-                        Kategória mentése
-                      </button>
-                      {editingCategoryId && (
-                        <button className="btn-action-primary" style={{ backgroundColor: '#64748b' }} onClick={() => { setEditingCategoryId(null); setNewCategory({ name: '', icon: '📄', type: 'both', isPublic: false }); }}>
-                          Mégse
-                        </button>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="shares-static-list mt-3 scrollable-list" style={{ maxHeight: '200px' }}>
-                    {categories.map((c: any) => {
-                      const isPublicCat = !c.UserId;
-                      return (
-                        <div key={c.Id} className="share-list-row-item">
-                          <span style={{ fontWeight: 600 }}>{c.Icon} {c.Name} {isPublicCat ? '🌐 (Publikus)' : '🔒 (Privát)'}</span>
-                          <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                            <button className="flat-delete-btn" style={{ color: 'var(--accent)' }} onClick={() => { setEditingCategoryId(c.Id); setNewCategory({ name: c.Name, icon: c.Icon, type: c.Type, isPublic: isPublicCat }); }}>✏️</button>
-                            {(!isPublicCat || isAdmin) && (
-                              <button className="flat-delete-btn" onClick={() => handleCategoryDelete(c.Id)}>❌</button>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <div className="ui-widget-card">
-                  <h3 className="card-heading-clean">➕ Új eszköz / entitás hozzáadása</h3>
-                  <div className="vertical-form mt-2">
-                    <select className="form-control-select" value={newAsset.category} onChange={(e) => setNewAsset({...newAsset, category: e.target.value})}>
-                      <option value="property">🏠 Ingatlan</option>
-                      <option value="car">🚗 Jármű</option>
-                      <option value="person">👤 Személy</option>
-                    </select>
-                    <input className="form-control-select" placeholder="Eszköz megnevezése (pl. Otthon, Toyota)" value={newAsset.friendlyName} onChange={(e) => setNewAsset({...newAsset, friendlyName: e.target.value})} />
-                    <button className="btn-action-primary" onClick={handleAssetSave}>Eszköz mentése</button>
-                  </div>
-                </div>
-
-                <div className="ui-widget-card">
-                  <h3 className="card-heading-clean">🤝 Családi hozzáférések megosztása</h3>
-                  <div className="flex-input-group mt-2">
-                    <input className="form-control-select" type="email" placeholder="partner@gmail.com" value={shareEmail} onChange={(e) => setShareEmail(e.target.value)} />
-                    <button className="btn-add-plus" onClick={handleShare}>+</button>
-                  </div>
-                  <div className="shares-static-list mt-3">
-                    {myShares.map(s => (
-                      <div key={s.id} className="share-list-row-item">
-                        <span>{s.shared_with_email}</span>
-                        <button className="flat-delete-btn" onClick={() => revokeShare(s.id)}>visszavonás</button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
               </div>
-            )}
 
-          </div>
-        ) : (
-          <div className="auth-wrapper-centered">
-            <div className="auth-hero-card">
-              <h1 className="auth-title">Üdvözöl a <span className="gradient-text">Rezsiapp 2.0</span></h1>
-              <p className="auth-subtitle">Háztartási költségeid és mérőóráid letisztult, világos kezelőfelülete.</p>
-              <div className="auth-action-box">
-                <div className="google-signin-btn-container">
-                  <GoogleLogin onSuccess={(res) => handleLoginSuccess(res.credential!)} />
+              <div className="ui-widget-card">
+                <h3 className="card-heading-clean">🤝 Családi hozzáférések megosztása</h3>
+                <div className="flex-input-group mt-2">
+                  <input className="form-control-select" type="email" placeholder="partner@gmail.com" value={shareEmail} onChange={(e) => setShareEmail(e.target.value)} />
+                  <button className="btn-add-plus" onClick={handleShare}>+</button>
                 </div>
+                <div className="shares-static-list mt-3">
+                  {myShares.map(s => (
+                    <div key={s.id} className="share-list-row-item">
+                      <span>{s.shared_with_email}</span>
+                      <button className="flat-delete-btn" onClick={() => revokeShare(s.id)}>visszavonás</button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+            </div>
+          )}
+
+        </div>
+      ) : (
+        <div className="auth-wrapper-centered">
+          <div className="auth-hero-card">
+            <h1 className="auth-title">Üdvözöl a <span className="gradient-text">Rezsiapp 2.0</span></h1>
+            <p className="auth-subtitle">Háztartási költségeid és mérőóráid letisztult, világos kezelőfelülete.</p>
+            <div className="auth-action-box">
+              <div className="google-signin-btn-container">
+                <GoogleLogin onSuccess={(res) => handleLoginSuccess(res.credential!)} />
               </div>
             </div>
           </div>
-        )}
+        </div>
+      )}
 
-        {/* --- STYLES ENGINE --- */}
-        <style>{`
-          :root {
-            --bg-main: #f8fafc;
-            --bg-card: #ffffff;
-            --bg-hover: #f1f5f9;
-            --text-main: #0f172a;
-            --text-muted: #64748b;
-            --accent: #4f46e5;
-            --accent-hover: #4338ca;
-            --border: #e2e8f0;
-            --emerald: #10b981;
-            --rose: #ef4444;
-          }
+      {/* --- STYLES ENGINE --- */}
+      <style>{`
+        :root {
+          --bg-main: #f8fafc;
+          --bg-card: #ffffff;
+          --bg-hover: #f1f5f9;
+          --text-main: #0f172a;
+          --text-muted: #64748b;
+          --accent: #4f46e5;
+          --accent-hover: #4338ca;
+          --border: #e2e8f0;
+          --emerald: #10b981;
+          --rose: #ef4444;
+        }
 
-          body {
-            background-color: var(--bg-main);
-            color: var(--text-main);
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            margin: 0; padding: 0;
-            font-size: 15px;
-          }
+        body {
+          background-color: var(--bg-main);
+          color: var(--text-main);
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+          margin: 0; padding: 0;
+          font-size: 15px;
+        }
 
-          .app-container {
-            max-width: 1300px;
-            margin: 0 auto;
-            padding: 20px;
-            box-sizing: border-box;
-          }
+        .app-container {
+          max-width: 1300px;
+          margin: 0 auto;
+          padding: 20px;
+          box-sizing: border-box;
+        }
 
-          .app-header {
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: 16px;
-            padding: 12px 24px;
-            margin-bottom: 24px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            flex-wrap: wrap;
-            gap: 16px;
-            box-shadow: 0 4px 6px -1px rgba(0,0,0,0.02);
-          }
+        .app-header {
+          background: var(--bg-card);
+          border: 1px solid var(--border);
+          border-radius: 16px;
+          padding: 12px 24px;
+          margin-bottom: 24px;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          flex-wrap: wrap;
+          gap: 16px;
+          box-shadow: 0 4px 6px -1px rgba(0,0,0,0.02);
+        }
 
-          .header-brand-section { display: flex; align-items: center; gap: 8px; }
-          .header-brand-section h2 { margin: 0; font-size: 1.2rem; font-weight: 800; letter-spacing: -0.5px; }
-          .version-tag { color: var(--accent); font-size: 0.8rem; }
+        .header-brand-section { display: flex; align-items: center; gap: 8px; }
+        .header-brand-section h2 { margin: 0; font-size: 1.2rem; font-weight: 800; letter-spacing: -0.5px; }
+        .version-tag { color: var(--accent); font-size: 0.8rem; }
 
-          .header-navigation-tabs { display: flex; gap: 6px; }
-          .nav-tab-link {
-            background: transparent; border: none; padding: 10px 16px; font-size: 0.9rem;
-            font-weight: 600; color: var(--text-muted); cursor: pointer; border-radius: 10px;
-            transition: all 0.2s;
-          }
-          .nav-tab-link:hover { background: var(--bg-hover); color: var(--text-main); }
-          .nav-tab-link.active { background: #e0e7ff; color: var(--accent); }
+        .header-navigation-tabs { display: flex; gap: 6px; }
+        .nav-tab-link {
+          background: transparent; border: none; padding: 10px 16px; font-size: 0.9rem;
+          font-weight: 600; color: var(--text-muted); cursor: pointer; border-radius: 10px;
+          transition: all 0.2s;
+        }
+        .nav-tab-link:hover { background: var(--bg-hover); color: var(--text-main); }
+        .nav-tab-link.active { background: #e0e7ff; color: var(--accent); }
 
-          .header-user-badge { display: flex; align-items: center; gap: 12px; }
-          .user-round-avatar { width: 36px; height: 36px; border-radius: 50%; border: 2px solid #c7d2fe; }
-          .logout-trigger-btn { background: transparent; border: none; cursor: pointer; font-size: 1.2rem; }
+        .header-user-badge { display: flex; align-items: center; gap: 12px; }
+        .user-round-avatar { width: 36px; height: 36px; border-radius: 50%; border: 2px solid #c7d2fe; }
+        .logout-trigger-btn { background: transparent; border: none; cursor: pointer; font-size: 1.2rem; }
 
-          .dashboard-layout-grid {
-            display: grid;
-            grid-template-columns: 1fr;
-            gap: 20px;
-          }
-          @media (min-width: 992px) {
-            .dashboard-layout-grid { grid-template-columns: 320px 1fr; }
-          }
+        .dashboard-layout-grid {
+          display: grid;
+          grid-template-columns: 1fr;
+          gap: 20px;
+        }
+        @media (min-width: 992px) {
+          .dashboard-layout-grid { grid-template-columns: 320px 1fr; }
+        }
 
-          .sidebar-container { display: flex; flex-direction: column; gap: 20px; }
-          .main-viewport-pane { min-width: 0; display: flex; flex-direction: column; gap: 20px; }
+        .sidebar-container { display: flex; flex-direction: column; gap: 20px; }
+        .main-viewport-pane { min-width: 0; display: flex; flex-direction: column; gap: 20px; }
 
-          .ui-widget-card {
-            background: var(--bg-card); border-radius: 16px; padding: 20px;
-            border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.01);
-          }
-          .card-heading-clean { margin: 0 0 16px 0; font-size: 1rem; font-weight: 700; }
-          .input-label-flat { font-size: 0.8rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; margin-bottom: 8px; display: block; }
+        .ui-widget-card {
+          background: var(--bg-card); border-radius: 16px; padding: 20px;
+          border: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.01);
+        }
+        .card-heading-clean { margin: 0 0 16px 0; font-size: 1rem; font-weight: 700; }
+        .input-label-flat { font-size: 0.8rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; margin-bottom: 8px; display: block; }
 
-          .form-control-select {
-            width: 100%; padding: 11px 14px; background: #ffffff; border: 1px solid var(--border);
-            border-radius: 10px; color: var(--text-main); font-size: 15px !important; box-sizing: border-box;
-            outline: none; height: 46px; transition: all 0.2s ease-in-out;
-            appearance: none; -webkit-appearance: none;
-            box-shadow: 0 1px 2px rgba(0,0,0,0.02);
-          }
-          select.form-control-select {
-            background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
-            background-repeat: no-repeat; background-position: right 14px center; background-size: 15px;
-            padding-right: 40px !important; cursor: pointer;
-          }
-          .form-control-select:focus {
-            border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.08); background-color: #ffffff;
-          }
-          .form-stack-vertical { display: flex; flex-direction: column; gap: 12px; }
-          .action-buttons-row { display: flex; gap: 8px; }
+        .form-control-select {
+          width: 100%; padding: 11px 14px; background: #ffffff; border: 1px solid var(--border);
+          border-radius: 10px; color: var(--text-main); font-size: 15px !important; box-sizing: border-box;
+          outline: none; height: 46px; transition: all 0.2s ease-in-out;
+          appearance: none; -webkit-appearance: none;
+          box-shadow: 0 1px 2px rgba(0,0,0,0.02);
+        }
+        select.form-control-select {
+          background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
+          background-repeat: no-repeat; background-position: right 14px center; background-size: 15px;
+          padding-right: 40px !important; cursor: pointer;
+        }
+        .form-control-select:focus {
+          border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.08); background-color: #ffffff;
+        }
+        .form-stack-vertical { display: flex; flex-direction: column; gap: 12px; }
+        .action-buttons-row { display: flex; gap: 8px; }
 
-          .mode-toggle-pill { display: flex; background: #f1f5f9; padding: 4px; border-radius: 10px; gap: 4px; margin-bottom: 4px; }
-          .pill-item { flex: 1; background: transparent; border: none; padding: 8px; font-size: 0.85rem; font-weight: 600; color: var(--text-muted); cursor: pointer; border-radius: 8px; }
-          .pill-item.active { background: white; color: var(--text-main); box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
-          .pill-item:disabled { opacity: 0.4; cursor: not-allowed; background: #e2e8f0; color: #a1a1aa; }
+        .mode-toggle-pill { display: flex; background: #f1f5f9; padding: 4px; border-radius: 10px; gap: 4px; margin-bottom: 4px; }
+        .pill-item { flex: 1; background: transparent; border: none; padding: 8px; font-size: 0.85rem; font-weight: 600; color: var(--text-muted); cursor: pointer; border-radius: 8px; }
+        .pill-item.active { background: white; color: var(--text-main); box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+        .pill-item:disabled { opacity: 0.4; cursor: not-allowed; background: #e2e8f0; color: #a1a1aa; }
 
-          .btn-submit-form, .btn-action-primary {
-            background: var(--emerald); color: white; border: none; padding: 12px; border-radius: 10px;
-            font-weight: 700; font-size: 0.95rem; cursor: pointer; height: 46px; transition: opacity 0.2s; text-align: center; width: 100%;
-          }
-          .btn-action-primary { background: var(--accent); }
-          .btn-submit-form:disabled { opacity: 0.4; cursor: not-allowed; }
+        .btn-submit-form, .btn-action-primary {
+          background: var(--emerald); color: white; border: none; padding: 12px; border-radius: 10px;
+          font-weight: 700; font-size: 0.95rem; cursor: pointer; height: 46px; transition: opacity 0.2s; text-align: center; width: 100%;
+        }
+        .btn-action-primary { background: var(--accent); }
+        .btn-submit-form:disabled { opacity: 0.4; cursor: not-allowed; }
 
-          .flex-input-group { display: flex; gap: 8px; }
-          .btn-add-plus { background: var(--accent); border: none; color: white; width: 46px; height: 46px; border-radius: 10px; font-size: 1.2rem; cursor: pointer; }
+        .flex-input-group { display: flex; gap: 8px; }
+        .btn-add-plus { background: var(--accent); border: none; color: white; width: 46px; height: 46px; border-radius: 10px; font-size: 1.2rem; cursor: pointer; }
 
-          .grid-wrapping-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
-          .grid-chip-item {
-            background: #f1f5f9; border: 1px solid var(--border); color: var(--text-main);
-            padding: 8px 12px; border-radius: 8px; font-size: 0.85rem; font-weight: 600; cursor: pointer;
-            display: inline-flex; align-items: center; gap: 6px; transition: all 0.2s;
-          }
-          .grid-chip-item:hover { background: #e2e8f0; }
+        .grid-wrapping-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+        .grid-chip-item {
+          background: #f1f5f9; border: 1px solid var(--border); color: var(--text-main);
+          padding: 8px 12px; border-radius: 8px; font-size: 0.85rem; font-weight: 600; cursor: pointer;
+          display: inline-flex; align-items: center; gap: 6px; transition: all 0.2s;
+        }
+        .grid-chip-item:hover { background: #e2e8f0; }
 
-          .chart-filter-controls-row { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-top: 10px; padding-top: 12px; border-top: 1px solid var(--border); }
-          .controls-left-side-modes { display: flex; gap: 8px; }
-          .controls-right-side-dates { display: flex; align-items: center; gap: 8px; }
-          .compact-btn-group { display: flex; background: #f1f5f9; padding: 3px; border-radius: 20px; border: 1px solid var(--border); }
-          .compact-btn-group button { background: transparent; border: none; color: var(--text-muted); padding: 5px 12px; border-radius: 20px; font-size: 0.75rem; font-weight: 700; cursor: pointer; }
-          .compact-btn-group button:disabled { opacity: 0.4; cursor: not-allowed; }
-          .compact-btn-group button.active { background: white; color: var(--text-main); box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
-          
-          .styled-range-select { height: 36px; padding: 4px 32px 4px 14px; font-size: 0.8rem !important; border-radius: 20px; width: auto; background-position: right 10px center; }
-          .custom-range-inputs-wrapper { display: flex; align-items: center; gap: 4px; background: #f1f5f9; padding: 3px 10px; border-radius: 20px; border: 1px solid var(--border); height: 36px; box-sizing: border-box; }
-          .small-date-input { background: transparent; border: none; font-size: 0.8rem; outline: none; color: var(--text-main); cursor: pointer; font-family: inherit; }
-          .date-separator { color: var(--text-muted); font-size: 0.8rem; }
+        .chart-filter-controls-row { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-top: 10px; padding-top: 12px; border-top: 1px solid var(--border); }
+        .controls-left-side-modes { display: flex; gap: 8px; }
+        .controls-right-side-dates { display: flex; align-items: center; gap: 8px; }
+        .compact-btn-group { display: flex; background: #f1f5f9; padding: 3px; border-radius: 20px; border: 1px solid var(--border); }
+        .compact-btn-group button { background: transparent; border: none; color: var(--text-muted); padding: 5px 12px; border-radius: 20px; font-size: 0.75rem; font-weight: 700; cursor: pointer; }
+        .compact-btn-group button:disabled { opacity: 0.4; cursor: not-allowed; }
+        .compact-btn-group button.active { background: white; color: var(--text-main); box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+        
+        .styled-range-select { height: 36px; padding: 4px 32px 4px 14px; font-size: 0.8rem !important; border-radius: 20px; width: auto; background-position: right 10px center; }
+        .custom-range-inputs-wrapper { display: flex; align-items: center; gap: 4px; background: #f1f5f9; padding: 3px 10px; border-radius: 20px; border: 1px solid var(--border); height: 36px; box-sizing: border-box; }
+        .small-date-input { background: transparent; border: none; font-size: 0.8rem; outline: none; color: var(--text-main); cursor: pointer; font-family: inherit; }
+        .date-separator { color: var(--text-muted); font-size: 0.8rem; }
 
-          .kpi-cards-flex-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
-          .kpi-tile { display: flex; flex-direction: column; gap: 4px; }
-          .kpi-label { font-size: 0.75rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; }
-          .kpi-value { font-size: 1.4rem; font-weight: 800; }
-          .kpi-sub { font-size: 0.75rem; color: var(--text-muted); }
+        .kpi-cards-flex-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+        .kpi-tile { display: flex; flex-direction: column; gap: 4px; }
+        .kpi-label { font-size: 0.75rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; }
+        .kpi-value { font-size: 1.4rem; font-weight: 800; }
+        .kpi-sub { font-size: 0.75rem; color: var(--text-muted); }
 
-          .roi-progress-wrapper { background: #e2e8f0; height: 16px; border-radius: 10px; overflow: hidden; }
-          .roi-progress-bar { background: var(--emerald); height: 100%; transition: width 0.4s ease-in-out; }
+        .roi-progress-wrapper { background: #e2e8f0; height: 16px; border-radius: 10px; overflow: hidden; }
+        .roi-progress-bar { background: var(--emerald); height: 100%; transition: width 0.4s ease-in-out; }
 
-          .search-filter-card-wrapper { margin-bottom: 16px; padding: 14px !important; }
-          .search-filter-grid-layout { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 12px; }
-          @media (max-width: 768px) { .search-filter-grid-layout { grid-template-columns: 1fr; } }
+        .search-filter-card-wrapper { margin-bottom: 16px; padding: 14px !important; }
+        .search-filter-grid-layout { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 12px; }
+        @media (max-width: 768px) { .search-filter-grid-layout { grid-template-columns: 1fr; } }
 
-          .settings-split-dashboard { display: grid; grid-template-columns: 1fr; gap: 20px; text-align: left; }
-          @media (min-width: 768px) { .settings-split-dashboard { grid-template-columns: 1fr 1fr; } }
-          .grid-span-full { grid-column: 1 / -1; }
-          .section-title-accent { margin-top: 0; font-size: 1.1rem; font-weight: 800; }
-          .section-explain-text { font-size: 0.85rem; color: var(--text-muted); margin-bottom: 16px; line-height: 1.4; }
-          .matrix-control-wrapper { display: grid; grid-template-columns: 1fr; gap: 20px; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
-          @media (min-width: 768px) { .matrix-control-wrapper { grid-template-columns: 220px 1fr; } }
-          .matrix-left-asset-list { background: #f8fafc; border-right: 1px solid var(--border); padding: 10px; display: flex; flex-direction: column; gap: 4px; }
-          .matrix-asset-sidebar-item { display: flex; flex-direction: column; text-align: left; padding: 10px; border: 1px solid transparent; background: transparent; border-radius: 8px; cursor: pointer; }
-          .matrix-asset-sidebar-item:hover { background: #e2e8f0; }
-          .matrix-asset-sidebar-item.active { background: white; border-color: var(--border); box-shadow: 0 2px 4px rgba(0,0,0,0.02); }
-          .matrix-asset-sidebar-item small { color: var(--text-muted); font-size: 0.7rem; }
-          .matrix-right-checkbox-panel { padding: 16px; background: white; }
-          .matrix-right-checkbox-panel h4 { margin-top: 0; margin-bottom: 14px; font-size: 0.95rem; }
-          .highlight-blue { color: var(--accent); font-weight: 700; }
-          .checkbox-toggles-flex-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
-          .checkbox-matrix-tile { display: flex; align-items: center; gap: 8px; padding: 10px; background: #f8fafc; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; }
-          .checkbox-matrix-tile input { width: 16px; height: 16px; margin: 0; cursor: pointer; }
-          .checkbox-matrix-tile.selected { background: #e0e7ff; border-color: #a5b4fc; font-weight: 600; }
-          .tile-icon { font-size: 1.1rem; }
-          .tile-name { font-size: 0.85rem; }
+        .settings-split-dashboard { display: grid; grid-template-columns: 1fr; gap: 20px; text-align: left; }
+        @media (min-width: 768px) { .settings-split-dashboard { grid-template-columns: 1fr 1fr; } }
+        .grid-span-full { grid-column: 1 / -1; }
+        .section-title-accent { margin-top: 0; font-size: 1.1rem; font-weight: 800; }
+        .section-explain-text { font-size: 0.85rem; color: var(--text-muted); margin-bottom: 16px; line-height: 1.4; }
+        .matrix-control-wrapper { display: grid; grid-template-columns: 1fr; gap: 20px; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+        @media (min-width: 768px) { .matrix-control-wrapper { grid-template-columns: 220px 1fr; } }
+        .matrix-left-asset-list { background: #f8fafc; border-right: 1px solid var(--border); padding: 10px; display: flex; flex-direction: column; gap: 4px; }
+        .matrix-asset-sidebar-item { display: flex; flex-direction: column; text-align: left; padding: 10px; border: 1px solid transparent; background: transparent; border-radius: 8px; cursor: pointer; }
+        .matrix-asset-sidebar-item:hover { background: #e2e8f0; }
+        .matrix-asset-sidebar-item.active { background: white; border-color: var(--border); box-shadow: 0 2px 4px rgba(0,0,0,0.02); }
+        .matrix-asset-sidebar-item small { color: var(--text-muted); font-size: 0.7rem; }
+        .matrix-right-checkbox-panel { padding: 16px; background: white; }
+        .matrix-right-checkbox-panel h4 { margin-top: 0; margin-bottom: 14px; font-size: 0.95rem; }
+        .highlight-blue { color: var(--accent); font-weight: 700; }
+        .checkbox-toggles-flex-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+        .checkbox-matrix-tile { display: flex; align-items: center; gap: 8px; padding: 10px; background: #f8fafc; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; }
+        .checkbox-matrix-tile input { width: 16px; height: 16px; margin: 0; cursor: pointer; }
+        .checkbox-matrix-tile.selected { background: #e0e7ff; border-color: #a5b4fc; font-weight: 600; }
+        .tile-icon { font-size: 1.1rem; }
+        .tile-name { font-size: 0.85rem; }
 
-          .modern-data-table-stack { display: flex; flex-direction: column; gap: 6px; }
-          .table-row-card { background: white; border: 1px solid var(--border); border-radius: 10px; padding: 10px 16px; display: flex; justify-content: space-between; align-items: center; }
-          .row-left-info { display: flex; align-items: center; gap: 12px; }
-          .row-badge-type { background: #f1f5f9; padding: 3px 8px; border-radius: 6px; font-size: 0.7rem; font-weight: 700; color: var(--text-muted); }
-          .row-main-title { font-weight: 700; font-size: 0.9rem; }
-          .row-sub-title { font-size: 0.75rem; color: var(--text-muted); }
-          .row-right-actions { display: flex; align-items: center; gap: 12px; }
-          .row-value-text { font-weight: 700; font-size: 0.95rem; }
-          .row-value-text.green { color: var(--emerald); }
-          .expense-dark { color: var(--text-main); }
-          .row-buttons-trigger button { background: #f1f5f9; border: 1px solid var(--border); padding: 4px 8px; border-radius: 6px; cursor: pointer; margin-left: 4px; }
-          .empty-state-text { text-align: center; padding: 20px; color: var(--text-muted); font-size: 0.9rem; }
+        .modern-data-table-stack { display: flex; flex-direction: column; gap: 6px; }
+        .table-row-card { background: white; border: 1px solid var(--border); border-radius: 10px; padding: 10px 16px; display: flex; justify-content: space-between; align-items: center; }
+        .row-left-info { display: flex; align-items: center; gap: 12px; }
+        .row-badge-type { background: #f1f5f9; padding: 3px 8px; border-radius: 6px; font-size: 0.7rem; font-weight: 700; color: var(--text-muted); }
+        .row-main-title { font-weight: 700; font-size: 0.9rem; }
+        .row-sub-title { font-size: 0.75rem; color: var(--text-muted); }
+        .row-right-actions { display: flex; align-items: center; gap: 12px; }
+        .row-value-text { font-weight: 700; font-size: 0.95rem; }
+        .row-value-text.green { color: var(--emerald); }
+        .expense-dark { color: var(--text-main); }
+        .row-buttons-trigger button { background: #f1f5f9; border: 1px solid var(--border); padding: 4px 8px; border-radius: 6px; cursor: pointer; margin-left: 4px; }
+        .empty-state-text { text-align: center; padding: 20px; color: var(--text-muted); font-size: 0.9rem; }
 
-          .share-list-row-item { display: flex; justify-content: space-between; padding: 8px; background: #f8fafc; border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem; align-items: center; }
-          .flat-delete-btn { background: transparent; border: none; color: var(--rose); cursor: pointer; }
-          .custom-tooltip-box { background: white; padding: 10px; border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 10px rgba(0,0,0,0.06); font-size: 12px; z-index: 99; }
-          .tooltip-title { margin: 0 0 4px 0; font-weight: bold; border-bottom: 1px solid var(--border); padding-bottom: 2px; }
-          .tooltip-row { display: flex; justify-content: space-between; gap: 12px; }
-          .font-emerald { color: var(--emerald); }
-          .font-rose { color: var(--rose); }
-          .auth-wrapper-centered { display: flex; justify-content: center; align-items: center; min-height: 50vh; }
-          .auth-hero-card { background: white; border: 1px solid var(--border); padding: 30px; border-radius: 16px; }
-          .gradient-text { color: var(--accent); font-weight: 800; }
-          .scrollable-list { overflow-y: auto; padding-right: 4px; }
-        `}</style>
-      </div>
-    </GoogleOAuthProvider>
+        .share-list-row-item { display: flex; justify-content: space-between; padding: 8px; background: #f8fafc; border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem; align-items: center; }
+        .flat-delete-btn { background: transparent; border: none; color: var(--rose); cursor: pointer; }
+        .custom-tooltip-box { background: white; padding: 10px; border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 10px rgba(0,0,0,0.06); font-size: 12px; z-index: 99; }
+        .tooltip-title { margin: 0 0 4px 0; font-weight: bold; border-bottom: 1px solid var(--border); padding-bottom: 2px; }
+        .tooltip-row { display: flex; justify-content: space-between; gap: 12px; }
+        .font-emerald { color: var(--emerald); }
+        .font-rose { color: var(--rose); }
+        .auth-wrapper-centered { display: flex; justify-content: center; align-items: center; min-height: 50vh; }
+        .auth-hero-card { background: white; border: 1px solid var(--border); padding: 30px; border-radius: 16px; }
+        .gradient-text { color: var(--accent); font-weight: 800; }
+        .scrollable-list { overflow-y: auto; padding-right: 4px; }
+      `}</style>
+    </div>
   );
 }
 
-export default App;
+// BIZTONSÁGI VÉDŐRÉTEGGEL CSOMAGOLT CSOMÓPONT EXPORTALÁSA
+export default function App() {
+  return (
+    <ErrorBoundary>
+      <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
+        <MainApp />
+      </GoogleOAuthProvider>
+    </ErrorBoundary>
+  );
+}
