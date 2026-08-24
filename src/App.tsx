@@ -166,6 +166,14 @@ function App() {
     }
   }
 
+  // CSALÁDI FIÓK VÁLTÁS
+  function handleSwitchAccount(targetSub: string) {
+    setViewingUserId(targetSub);
+    if (user?.token) {
+      fetchAll(user.token, targetSub);
+    }
+  }
+
   function handleCategoryFilterClick(catName: string) {
     if (catName === 'Összes' || catName === 'Összes kiadás') {
       setFilter([catName]);
@@ -241,7 +249,16 @@ function App() {
   async function fetchSharedAccounts(token: string) {
     try {
       const res = await fetch(`${BACKEND_URL}/api/shares/me`, { headers: { 'Authorization': `Bearer ${token}` } });
-      if (res.ok) setSharedUsers(await res.json());
+      if (res.ok) {
+        const shared = await res.json();
+        const safeShared = Array.isArray(shared) ? shared : [];
+        setSharedUsers(safeShared);
+
+        // HA A FELHASZNÁLÓNAK NINCS SAJÁT ESZKÖZE, AUTOMATIKUSAN ÁTVÁLTUNK A VELE MEGOSZTOTT FIÓKRA!
+        if (safeShared.length > 0 && user && viewingUserId === user.sub && assets.length === 0) {
+          handleSwitchAccount(safeShared[0].owner_id);
+        }
+      }
     } catch (e) { console.error(e); }
   }
 
@@ -554,47 +571,6 @@ function App() {
     });
     if (res.ok) fetchMyShares(user.token);
   }
-
-  useEffect(() => {
-    const savedToken = localStorage.getItem('userToken');
-    if (savedToken) handleLoginSuccess(savedToken);
-  }, []);
-
-  useEffect(() => {
-    if (assets.length > 0 && !matrixSelectedAssetId) {
-      setMatrixSelectedAssetId(String(assets[0].Id));
-    }
-  }, [assets]);
-
-  useEffect(() => {
-    const allowed = getAllowedTypes(targetAssetId);
-    if (allowed.length > 0) {
-      if (!type || !allowed.includes(type)) {
-        setType(allowed[0]);
-      }
-    } else {
-      setType('');
-    }
-  }, [targetAssetId, assets, categories, assetCategoryMap]);
-
-  useEffect(() => {
-    const asset = assets.find(a => String(a.Id) === String(targetAssetId));
-    const currentCat = categories.find(c => c.Name === type);
-    if (asset?.Category === 'car' || currentCat?.Type === 'invoice_only' || currentCat?.Type === 'income') {
-      setRecordMode('invoice');
-    }
-  }, [targetAssetId, type, assets, categories]);
-
-  const isMeterDisabled = useMemo(() => {
-    const asset = assets.find(a => String(a.Id) === String(targetAssetId));
-    const currentCat = categories.find(c => c.Name === type);
-    return asset?.Category === 'car' || currentCat?.Type === 'invoice_only' || currentCat?.Type === 'income';
-  }, [targetAssetId, type, assets, categories]);
-
-  const visibleCategories = useMemo(() => {
-    const allowedNames = getAllowedTypes(selectedAssetId);
-    return categories.filter(c => allowedNames.includes(c.Name));
-  }, [categories, selectedAssetId, assetCategoryMap]);
 
   const combinedList = useMemo(() => {
     const safeRecords = Array.isArray(records) ? records : [];
@@ -1046,7 +1022,7 @@ function App() {
           ))}
         </datalist>
 
-        {/* --- NAVBAR --- */}
+        {/* --- NAVBAR WITH ACCOUNT SWITCHER --- */}
         <header className="app-header">
           <div className="header-brand-section">
             <span className="brand-icon">⚡</span>
@@ -1065,6 +1041,21 @@ function App() {
 
           {user && (
             <div className="header-user-badge">
+              {/* FIÓKVÁLTÓ SELECTOR HA VAN MEGSZOLT FIÓK */}
+              {sharedUsers.length > 0 && (
+                <select 
+                  className="form-control-select styled-range-select" 
+                  style={{ height: '36px', fontSize: '0.8rem !important' }}
+                  value={viewingUserId || user.sub} 
+                  onChange={(e) => handleSwitchAccount(e.target.value)}
+                >
+                  <option value={user.sub}>👤 Saját fiók ({user.email})</option>
+                  {sharedUsers.map((su: any) => (
+                    <option key={su.owner_id} value={su.owner_id}>🤝 {su.owner_email} fiókja</option>
+                  ))}
+                </select>
+              )}
+
               <img src={user.picture} alt="Avatar" className="user-round-avatar" />
               <button className="logout-trigger-btn" onClick={forceLogout} title="Kijelentkezés">🚪</button>
             </div>
@@ -1237,7 +1228,7 @@ function App() {
               </div>
             )}
 
-            {/* ================= TAB 2: ALBÉRLET KEZELÉS (EMPTY STATE PROTECTION) ================= */}
+            {/* ================= TAB 2: ALBÉRLET KEZELÉS ================= */}
             {activeTab === 'rental' && (
               propertyAssets.length > 0 ? (
                 <div className="dashboard-layout-grid">
@@ -1381,7 +1372,7 @@ function App() {
               )
             )}
 
-            {/* ================= TAB 3: MEGTÉRÜLÉS & EV TÖLTÉS (EMPTY STATE PROTECTION) ================= */}
+            {/* ================= TAB 3: MEGTÉRÜLÉS & EV TÖLTÉS ================= */}
             {activeTab === 'ev-solar' && (
               assets.length > 0 ? (
                 <div className="dashboard-layout-grid">
