@@ -65,7 +65,6 @@ async function canAccessData(requesterId, requesterEmail, targetUserId) {
     const [rows] = await pool.query('SELECT id FROM shares WHERE owner_id = ? AND shared_with_email = ?', [targetUserId, requesterEmail]);
     if (rows.length > 0) return true;
 
-    // Bérlői hozzáférés ellenőrzése
     const [rentRows] = await pool.query('SELECT id FROM rental_contracts WHERE owner_id = ? AND tenant_email = ?', [targetUserId, requesterEmail]);
     return rentRows.length > 0;
 }
@@ -117,12 +116,19 @@ app.delete('/api/categories/:id', verifyUser, requireAdmin, async (req, res) => 
     } catch (err) { res.status(500).json({ error: 'Hiba' }); }
 });
 
-// --- ESZKÖZÖK KEZELÉSE ---
+// --- ESZKÖZÖK KEZELÉSE (MEGOSZTÁSOKAT ÉS BÉRLŐKET AUTOMATIKUSAN KEZELŐ INTELLIGENS LEKÉRDEZÉS) ---
 app.get('/api/assets', verifyUser, async (req, res) => {
     const targetUserId = req.query.userId || req.userId;
     if (!(await canAccessData(req.userId, req.userEmail, targetUserId))) return res.status(403).json({ error: "Nincs jogosultság" });
     try {
-        const [rows] = await pool.query('SELECT * FROM assets WHERE UserId = ?', [targetUserId]);
+        const [rows] = await pool.query(
+            `SELECT DISTINCT a.* 
+             FROM assets a
+             LEFT JOIN shares s ON a.UserId = s.owner_id AND s.shared_with_email = ?
+             LEFT JOIN rental_contracts rc ON a.Id = rc.asset_id AND rc.tenant_email = ?
+             WHERE a.UserId = ? OR s.shared_with_email IS NOT NULL OR rc.tenant_email IS NOT NULL`,
+            [req.userEmail, req.userEmail, targetUserId]
+        );
         res.json(rows);
     } catch (err) { res.status(500).json({ error: 'DB hiba' }); }
 });
@@ -373,7 +379,7 @@ app.delete('/api/benchmarks/:id', verifyUser, async (req, res) => {
     } catch (err) { res.status(500).json({ error: 'Hiba a törlésnél' }); }
 });
 
-// --- ALBÉRLET SZERZŐDÉSEK ÉS BEFIZETÉSEK VÉGPONTOK ---
+// --- ALBÉRLET SZERZŐDÉSEK ÉS BEFIZETÉSEK ---
 app.get('/api/rentals/contracts', verifyUser, async (req, res) => {
     try {
         const [rows] = await pool.query('SELECT * FROM rental_contracts WHERE owner_id = ? OR tenant_email = ?', [req.userId, req.userEmail]);
