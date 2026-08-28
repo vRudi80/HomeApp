@@ -16,7 +16,6 @@ const PIE_COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6'];
 
 const ADMIN_EMAILS = ['kovari.rudolf@gmail.com'];
 
-// HIVATALOS LAKOSSÁGI GÁZ JELLEGGÖRBE (1729 m3 / év eloszlása hónapokra)
 const GAS_JELLEGGORBE_M3: { [month: string]: number } = {
   '01': 304,
   '02': 262,
@@ -689,7 +688,6 @@ function MainApp() {
     return Array.from(set);
   }, [evLogs]);
 
-  // ELÉRHE TŐ GÁZ ÉVEK DINAMIKUS LISTÁJA
   const availableGasYears = useMemo(() => {
     const safeRecords = Array.isArray(records) ? records : [];
     const yearsSet = new Set<string>();
@@ -707,7 +705,6 @@ function MainApp() {
     return Array.from(yearsSet).sort().reverse();
   }, [records]);
 
-  // DINAMIKUS GÁZFOGYASZTÁS ÉS REZSITÁMOGATOTT JELLEGGÖRBE MOTOR
   const gasYearData = useMemo(() => {
     const safeRecords = Array.isArray(records) ? records : [];
     
@@ -1408,10 +1405,9 @@ function MainApp() {
                     </div>
                   </>
                 ) : (
-                  /* ================= ÚJ: GÁZFOGYASZTÁS & JELLEGGÖRBE NÉZET ================= */
+                  /* ================= GÁZFOGYASZTÁS & JELLEGGÖRBE NÉZET ================= */
                   <div className="form-stack-vertical">
                     
-                    {/* ÉVSZŰRŐ ÉS INFORMÁCIÓS SÁV */}
                     <div className="ui-widget-card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
                       <div>
                         <h3 className="card-heading-clean" style={{ margin: 0 }}>🔥 Gázfogyasztási Jelleggörbe Elemzés</h3>
@@ -1432,7 +1428,6 @@ function MainApp() {
                       </div>
                     </div>
 
-                    {/* ÉVES KPI KÁRTYÁK */}
                     <div className="kpi-cards-flex-grid">
                       <div className="ui-widget-card kpi-tile">
                         <span className="kpi-label">Támogatott Éves Keret</span>
@@ -1455,7 +1450,6 @@ function MainApp() {
                       </div>
                     </div>
 
-                    {/* 1. GRAFIKON: HAVI FOGYASZTÁS VS JELLEGGÖRBE LIMIT */}
                     <div className="ui-widget-card">
                       <h3 className="card-heading-clean">📊 Havi Gázfogyasztás vs. Rezsikeret ({selectedGasYear})</h3>
                       <ResponsiveContainer width="100%" height={260}>
@@ -1471,7 +1465,6 @@ function MainApp() {
                       </ResponsiveContainer>
                     </div>
 
-                    {/* 2. GRAFIKON: KUMULÁLT ÁLLÁS AZ ÉV SORÁN */}
                     <div className="ui-widget-card">
                       <h3 className="card-heading-clean">📈 Halmozott Éves Fogyasztás vs. Keretösszeg ({selectedGasYear})</h3>
                       <ResponsiveContainer width="100%" height={240}>
