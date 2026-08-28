@@ -92,6 +92,7 @@ function calculateExcelSolarSavings(totalCons: number, gridKwh: number, priceLow
 }
 
 function MainApp() {
+  // --- 1. SZEKCIÓ: ÁLLAPOTOK (STATES) ---
   const [user, setUser] = useState<any>(null);
   const [records, setRecords] = useState<any[]>([]);
   const [invoices, setInvoices] = useState<any[]>([]);
@@ -188,6 +189,7 @@ function MainApp() {
     notes: 'Rendes havi utalás'
   });
 
+  // --- 2. SZEKCIÓ: SEGÉDFÜGGVÉNYEK & JOGOSULTSÁGOK ---
   const isReadOnly = viewingUserId !== null && user && viewingUserId !== user.sub;
   const isAdmin = user && user.email && ADMIN_EMAILS.includes(user.email);
 
@@ -334,6 +336,19 @@ function MainApp() {
     return allCatNames;
   }
 
+  // --- 3. SZEKCIÓ: LÁTHATÓ KATEGÓRIÁK ÉS KORLÁTOZÁSOK ---
+  const visibleCategories = useMemo(() => {
+    const allowedNames = getAllowedTypes(selectedAssetId);
+    return categories.filter(c => allowedNames.includes(c.Name));
+  }, [categories, selectedAssetId, assetCategoryMap]);
+
+  const isMeterDisabled = useMemo(() => {
+    const asset = assets.find(a => String(a.Id) === String(targetAssetId));
+    const currentCat = categories.find(c => c.Name === type);
+    return asset?.Category === 'car' || currentCat?.Type === 'invoice_only' || currentCat?.Type === 'income';
+  }, [targetAssetId, type, assets, categories]);
+
+  // --- 4. SZEKCIÓ: API ADATLEKÉRDEZÉSEK ---
   async function fetchMyShares(token: string) {
     try {
       const res = await fetch(`${BACKEND_URL}/api/shares/owned`, { headers: { 'Authorization': `Bearer ${token}` } });
@@ -408,6 +423,36 @@ function MainApp() {
   }
 
   useEffect(() => {
+    const savedToken = localStorage.getItem('userToken');
+    if (savedToken) handleLoginSuccess(savedToken);
+  }, []);
+
+  useEffect(() => {
+    if (assets.length > 0 && !matrixSelectedAssetId) {
+      setMatrixSelectedAssetId(String(assets[0].Id));
+    }
+  }, [assets]);
+
+  useEffect(() => {
+    const allowed = getAllowedTypes(targetAssetId);
+    if (allowed.length > 0) {
+      if (!type || !allowed.includes(type)) {
+        setType(allowed[0]);
+      }
+    } else {
+      setType('');
+    }
+  }, [targetAssetId, assets, categories, assetCategoryMap]);
+
+  useEffect(() => {
+    const asset = assets.find(a => String(a.Id) === String(targetAssetId));
+    const currentCat = categories.find(c => c.Name === type);
+    if (asset?.Category === 'car' || currentCat?.Type === 'invoice_only' || currentCat?.Type === 'income') {
+      setRecordMode('invoice');
+    }
+  }, [targetAssetId, type, assets, categories]);
+
+  useEffect(() => {
     if (selectedRentalAssetId && user?.token) {
       fetch(`${BACKEND_URL}/api/rentals/payments?assetId=${selectedRentalAssetId}`, {
         headers: { 'Authorization': `Bearer ${user.token}` }
@@ -462,6 +507,7 @@ function MainApp() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
+  // --- 5. SZEKCIÓ: ADAT MENTÉSI METÓDUSOK ---
   async function handleSaveRentalContract() {
     if (!selectedRentalAssetId) return alert("Válassz ingatlant!");
     const res = await fetch(`${BACKEND_URL}/api/rentals/contracts`, {
@@ -666,59 +712,108 @@ function MainApp() {
     if (res.ok) fetchMyShares(user.token);
   }
 
-  // ITT VOLT A KINULLÁZÓDOTT IS_METER_DISABLED DEFINÍCIÓJÁNAK HELYE!
-  const isMeterDisabled = useMemo(() => {
-    const asset = assets.find(a => String(a.Id) === String(targetAssetId));
-    const currentCat = categories.find(c => c.Name === type);
-    return asset?.Category === 'car' || currentCat?.Type === 'invoice_only' || currentCat?.Type === 'income';
-  }, [targetAssetId, type, assets, categories]);
+  // --- 6. SZEKCIÓ: KALKULÁCIÓS MOTOROK ---
+  const availableGasYears = useMemo(() => {
+    const safeRecords = Array.isArray(records) ? records : [];
+    const yearsSet = new Set<string>();
+    yearsSet.add(new Date().getFullYear().toString());
 
-  const combinedList = useMemo(() => {
+    safeRecords.forEach((r: any) => {
+      if (r && (r.Type === 'Gáz' || r.Type === 'gáz')) {
+        const y = String(r.FormattedDate || r.Date || '').substring(0, 4);
+        if (y && y.length === 4) {
+          yearsSet.add(y);
+        }
+      }
+    });
+
+    return Array.from(yearsSet).sort().reverse();
+  }, [records]);
+
+  const gasYearData = useMemo(() => {
     const safeRecords = Array.isArray(records) ? records : [];
     const safeInvoices = Array.isArray(invoices) ? invoices : [];
-
-    const formattedRecords = safeRecords.map(r => ({
-      ...r,
-      lType: 'meter',
-      d: r.FormattedDate || r.Date
-    }));
-
-    const formattedInvoices = safeInvoices.map(i => ({
-      ...i,
-      lType: 'invoice',
-      Value: i.Amount,
-      d: i.Month
-    }));
-
-    return [...formattedRecords, ...formattedInvoices].sort(
-      (a, b) => new Date(b.d).getTime() - new Date(a.d).getTime()
+    
+    const gasRecs = safeRecords.filter((r: any) => 
+      r && (r.Type === 'Gáz' || r.Type === 'gáz') &&
+      (selectedAssetId === 'all' || String(r.AssetId) === String(selectedAssetId))
     );
-  }, [records, invoices]);
 
-  const filteredCombinedList = useMemo(() => {
-    return combinedList.filter((item: any) => {
-      const asset = assets.find(a => String(a.Id) === String(item.AssetId));
-      const assetName = asset ? asset.FriendlyName.toLowerCase() : '';
-      const itemType = item.Type ? item.Type.toLowerCase() : '';
-      
-      const searchMatch = 
-        itemType.includes(txSearch.toLowerCase()) || 
-        assetName.includes(txSearch.toLowerCase()) || 
-        String(item.Value).includes(txSearch);
-        
-      const assetMatch = txAssetFilter === 'all' || String(item.AssetId) === txAssetFilter;
-      const categoryMatch = txCategoryFilter === 'all' || item.Type === txCategoryFilter;
-      
-      return searchMatch && assetMatch && categoryMatch;
+    const sortedGas = gasRecs.sort((a: any, b: any) => 
+      String(a.FormattedDate || a.Date || '').localeCompare(String(b.FormattedDate || b.Date || ''))
+    );
+
+    const firstReadingPerMonth: { [key: string]: number } = {};
+    sortedGas.forEach((r: any) => {
+      const monthKey = String(r.FormattedDate || r.Date || '').substring(0, 7);
+      if (monthKey && firstReadingPerMonth[monthKey] === undefined) {
+        firstReadingPerMonth[monthKey] = parseFloat(r.Value || 0) || 0;
+      }
     });
-  }, [combinedList, txSearch, txAssetFilter, txCategoryFilter, assets]);
 
-  const uniqueLocations = useMemo(() => {
-    const set = new Set<string>(['Napelem', 'Otthon', 'Tesla Supercharger', 'Ionity', 'Tea', 'Garázs Tondo']);
-    const safeEv = Array.isArray(evLogs) ? evLogs : [];
-    safeEv.forEach(log => { if (log && log.location) set.add(log.location); });
-    return Array.from(set);
-  }, [evLogs]);
+    const monthKeys = Object.keys(firstReadingPerMonth).sort();
+    const usageByMonth: { [month: string]: number } = {};
+
+    for (let i = 0; i < monthKeys.length - 1; i++) {
+      const mCurr = monthKeys[i];
+      const mNext = monthKeys[i + 1];
+      const diff = firstReadingPerMonth[mNext] - firstReadingPerMonth[mCurr];
+      if (diff >= 0) {
+        usageByMonth[mCurr] = diff;
+      }
+    }
+
+    let cumActual = 0;
+    let cumLimit = 0;
+    let totalGasCost = 0;
+
+    const monthNames = ['Január', 'Február', 'Március', 'Április', 'Május', 'Június', 'Július', 'Augusztus', 'Szeptember', 'Október', 'November', 'December'];
+
+    const monthlyList = monthNames.map((mName, idx) => {
+      const monthNum = String(idx + 1).padStart(2, '0');
+      const yearMonth = `${selectedGasYear}-${monthNum}`;
+      
+      const actualUsage = usageByMonth[yearMonth] || 0;
+      const jelleggorbeLimit = GAS_JELLEGGORBE_M3[monthNum] || 0;
+
+      const gasCost = safeInvoices.filter((inv: any) => 
+        inv && (inv.Type === 'Gáz' || inv.Type === 'gáz') &&
+        String(inv.Month || '').substring(0, 7) === yearMonth &&
+        (selectedAssetId === 'all' || String(inv.AssetId) === String(selectedAssetId))
+      ).reduce((sum: number, inv: any) => sum + (parseFloat(inv.Amount || 0) || 0), 0);
+
+      totalGasCost += gasCost;
+      cumActual += actualUsage;
+      cumLimit += jelleggorbeLimit;
+
+      const monthlyDiff = jelleggorbeLimit - actualUsage;
+
+      return {
+        monthKey: yearMonth,
+        monthName: mName,
+        monthNum,
+        actualUsage: Math.round(actualUsage * 10) / 10,
+        jelleggorbeLimit,
+        cumActual: Math.round(cumActual * 10) / 10,
+        cumLimit,
+        monthlyDiff: Math.round(monthlyDiff * 10) / 10,
+        gasCost: Math.round(gasCost)
+      };
+    });
+
+    const yearTotalActual = Math.round(cumActual * 10) / 10;
+    const yearRemainingLimit = Math.max(0, ANNUAL_GAS_LIMIT_M3 - yearTotalActual);
+    const yearOverLimit = Math.max(0, yearTotalActual - ANNUAL_GAS_LIMIT_M3);
+
+    return {
+      monthlyList,
+      yearTotalActual,
+      yearRemainingLimit,
+      yearOverLimit,
+      totalGasCost,
+      annualLimit: ANNUAL_GAS_LIMIT_M3
+    };
+  }, [records, invoices, selectedGasYear, selectedAssetId]);
 
   const solarEnergyBalanceData = useMemo(() => {
     const safeBm = Array.isArray(benchmarks) ? benchmarks : [];
