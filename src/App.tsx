@@ -242,6 +242,31 @@ function MainApp() {
     }
   }
 
+  function handleEditRecord(item: any) {
+    setEditingRecordId(item.Id || item.id);
+    setEditingRecordLType(item.lType);
+    setTargetAssetId(String(item.AssetId || ''));
+    setType(item.Type || '');
+    setValue(String(item.Value || ''));
+    setRecordMode(item.lType);
+    
+    const formattedDateStr = String(item.d || item.Date || item.Month || '').substring(0, 10);
+    if (item.lType === 'meter') {
+      setMeterDate(formattedDateStr);
+    } else {
+      setInvoiceDate(formattedDateStr);
+    }
+
+    setActiveTab('dashboard');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  function cancelRecordEdit() {
+    setEditingRecordId(null);
+    setEditingRecordLType(null);
+    setValue('');
+  }
+
   function handleCategoryFilterClick(catName: string) {
     if (catName === 'Összes' || catName === 'Összes kiadás') {
       setFilter([catName]);
@@ -641,10 +666,12 @@ function MainApp() {
     if (res.ok) fetchMyShares(user.token);
   }
 
-  const visibleCategories = useMemo(() => {
-    const allowedNames = getAllowedTypes(selectedAssetId);
-    return categories.filter(c => allowedNames.includes(c.Name));
-  }, [categories, selectedAssetId, assetCategoryMap]);
+  // ITT VOLT A KINULLÁZÓDOTT IS_METER_DISABLED DEFINÍCIÓJÁNAK HELYE!
+  const isMeterDisabled = useMemo(() => {
+    const asset = assets.find(a => String(a.Id) === String(targetAssetId));
+    const currentCat = categories.find(c => c.Name === type);
+    return asset?.Category === 'car' || currentCat?.Type === 'invoice_only' || currentCat?.Type === 'income';
+  }, [targetAssetId, type, assets, categories]);
 
   const combinedList = useMemo(() => {
     const safeRecords = Array.isArray(records) ? records : [];
@@ -692,110 +719,6 @@ function MainApp() {
     safeEv.forEach(log => { if (log && log.location) set.add(log.location); });
     return Array.from(set);
   }, [evLogs]);
-
-  const availableGasYears = useMemo(() => {
-    const safeRecords = Array.isArray(records) ? records : [];
-    const yearsSet = new Set<string>();
-    yearsSet.add(new Date().getFullYear().toString());
-
-    safeRecords.forEach((r: any) => {
-      if (r && (r.Type === 'Gáz' || r.Type === 'gáz')) {
-        const y = String(r.FormattedDate || r.Date || '').substring(0, 4);
-        if (y && y.length === 4) {
-          yearsSet.add(y);
-        }
-      }
-    });
-
-    return Array.from(yearsSet).sort().reverse();
-  }, [records]);
-
-  // GÁZFOGYASZTÁS & JELLEGGÖRBE CSATLAKOZTATOTT SZÁMLÁKKAL
-  const gasYearData = useMemo(() => {
-    const safeRecords = Array.isArray(records) ? records : [];
-    const safeInvoices = Array.isArray(invoices) ? invoices : [];
-    
-    const gasRecs = safeRecords.filter((r: any) => 
-      r && (r.Type === 'Gáz' || r.Type === 'gáz') &&
-      (selectedAssetId === 'all' || String(r.AssetId) === String(selectedAssetId))
-    );
-
-    const sortedGas = gasRecs.sort((a: any, b: any) => 
-      String(a.FormattedDate || a.Date || '').localeCompare(String(b.FormattedDate || b.Date || ''))
-    );
-
-    const firstReadingPerMonth: { [key: string]: number } = {};
-    sortedGas.forEach((r: any) => {
-      const monthKey = String(r.FormattedDate || r.Date || '').substring(0, 7);
-      if (monthKey && firstReadingPerMonth[monthKey] === undefined) {
-        firstReadingPerMonth[monthKey] = parseFloat(r.Value || 0) || 0;
-      }
-    });
-
-    const monthKeys = Object.keys(firstReadingPerMonth).sort();
-    const usageByMonth: { [month: string]: number } = {};
-
-    for (let i = 0; i < monthKeys.length - 1; i++) {
-      const mCurr = monthKeys[i];
-      const mNext = monthKeys[i + 1];
-      const diff = firstReadingPerMonth[mNext] - firstReadingPerMonth[mCurr];
-      if (diff >= 0) {
-        usageByMonth[mCurr] = diff;
-      }
-    }
-
-    let cumActual = 0;
-    let cumLimit = 0;
-    let totalGasCost = 0;
-
-    const monthNames = ['Január', 'Február', 'Március', 'Április', 'Május', 'Június', 'Július', 'Augusztus', 'Szeptember', 'Október', 'November', 'December'];
-
-    const monthlyList = monthNames.map((mName, idx) => {
-      const monthNum = String(idx + 1).padStart(2, '0');
-      const yearMonth = `${selectedGasYear}-${monthNum}`;
-      
-      const actualUsage = usageByMonth[yearMonth] || 0;
-      const jelleggorbeLimit = GAS_JELLEGGORBE_M3[monthNum] || 0;
-
-      // Adott havi gázszámlák összegének kikeresése
-      const gasCost = safeInvoices.filter((inv: any) => 
-        inv && (inv.Type === 'Gáz' || inv.Type === 'gáz') &&
-        String(inv.Month || '').substring(0, 7) === yearMonth &&
-        (selectedAssetId === 'all' || String(inv.AssetId) === String(selectedAssetId))
-      ).reduce((sum: number, inv: any) => sum + (parseFloat(inv.Amount || 0) || 0), 0);
-
-      totalGasCost += gasCost;
-      cumActual += actualUsage;
-      cumLimit += jelleggorbeLimit;
-
-      const monthlyDiff = jelleggorbeLimit - actualUsage;
-
-      return {
-        monthKey: yearMonth,
-        monthName: mName,
-        monthNum,
-        actualUsage: Math.round(actualUsage * 10) / 10,
-        jelleggorbeLimit,
-        cumActual: Math.round(cumActual * 10) / 10,
-        cumLimit,
-        monthlyDiff: Math.round(monthlyDiff * 10) / 10,
-        gasCost: Math.round(gasCost)
-      };
-    });
-
-    const yearTotalActual = Math.round(cumActual * 10) / 10;
-    const yearRemainingLimit = Math.max(0, ANNUAL_GAS_LIMIT_M3 - yearTotalActual);
-    const yearOverLimit = Math.max(0, yearTotalActual - ANNUAL_GAS_LIMIT_M3);
-
-    return {
-      monthlyList,
-      yearTotalActual,
-      yearRemainingLimit,
-      yearOverLimit,
-      totalGasCost,
-      annualLimit: ANNUAL_GAS_LIMIT_M3
-    };
-  }, [records, invoices, selectedGasYear, selectedAssetId]);
 
   const solarEnergyBalanceData = useMemo(() => {
     const safeBm = Array.isArray(benchmarks) ? benchmarks : [];
@@ -1126,7 +1049,6 @@ function MainApp() {
     return null;
   };
 
-  // EGYEDI CÉLZOTT TOOLTIP A GÁZ HÓNAPOS GRAFIKONHOZ
   const GasCustomTooltip = ({ active, payload }: any) => {
     if (active && payload && payload.length) {
       const data = payload[0].payload;
@@ -1157,7 +1079,6 @@ function MainApp() {
     return null;
   };
 
-  // EGYEDI CÉLZOTT TOOLTIP A GÁZ KUMULÁLT GRAFIKONHOZ
   const GasCumCustomTooltip = ({ active, payload }: any) => {
     if (active && payload && payload.length) {
       const data = payload[0].payload;
@@ -1542,7 +1463,7 @@ function MainApp() {
                       </ResponsiveContainer>
                     </div>
 
-                    {/* 2. GRAFIKON: HALMOZOTT FOGYASZTÁS VS KEREI KERET (COMPOSED CHART-RA CSERÉLVE A PIROS VONAL MIATT!) */}
+                    {/* 2. GRAFIKON: HALMOZOTT FOGYASZTÁS VS KERET KERET */}
                     <div className="ui-widget-card">
                       <h3 className="card-heading-clean">📈 Halmozott Éves Fogyasztás vs. Keretösszeg ({selectedGasYear})</h3>
                       <ResponsiveContainer width="100%" height={240}>
