@@ -336,7 +336,7 @@ function MainApp() {
     return allCatNames;
   }
 
-  // --- 3. SZEKCIÓ: LÁTHATÓ KATEGÓRIÁK ÉS KORLÁTOZÁSOK ---
+  // --- 3. SZEKCIÓ: MEMOIZÁLT LISTÁK ÉS KORLÁTOZÁSOK ---
   const visibleCategories = useMemo(() => {
     const allowedNames = getAllowedTypes(selectedAssetId);
     return categories.filter(c => allowedNames.includes(c.Name));
@@ -348,7 +348,55 @@ function MainApp() {
     return asset?.Category === 'car' || currentCat?.Type === 'invoice_only' || currentCat?.Type === 'income';
   }, [targetAssetId, type, assets, categories]);
 
-  // --- 4. SZEKCIÓ: API ADATLEKÉRDEZÉSEK ---
+  const combinedList = useMemo(() => {
+    const safeRecords = Array.isArray(records) ? records : [];
+    const safeInvoices = Array.isArray(invoices) ? invoices : [];
+
+    const formattedRecords = safeRecords.map(r => ({
+      ...r,
+      lType: 'meter',
+      d: r.FormattedDate || r.Date
+    }));
+
+    const formattedInvoices = safeInvoices.map(i => ({
+      ...i,
+      lType: 'invoice',
+      Value: i.Amount,
+      d: i.Month
+    }));
+
+    return [...formattedRecords, ...formattedInvoices].sort(
+      (a, b) => new Date(b.d).getTime() - new Date(a.d).getTime()
+    );
+  }, [records, invoices]);
+
+  const filteredCombinedList = useMemo(() => {
+    return combinedList.filter((item: any) => {
+      const asset = assets.find(a => String(a.Id) === String(item.AssetId));
+      const assetName = asset ? asset.FriendlyName.toLowerCase() : '';
+      const itemType = item.Type ? item.Type.toLowerCase() : '';
+      
+      const searchMatch = 
+        itemType.includes(txSearch.toLowerCase()) || 
+        assetName.includes(txSearch.toLowerCase()) || 
+        String(item.Value).includes(txSearch);
+        
+      const assetMatch = txAssetFilter === 'all' || String(item.AssetId) === txAssetFilter;
+      const categoryMatch = txCategoryFilter === 'all' || item.Type === txCategoryFilter;
+      
+      return searchMatch && assetMatch && categoryMatch;
+    });
+  }, [combinedList, txSearch, txAssetFilter, txCategoryFilter, assets]);
+
+  // AKKU TÖLTŐHELYEK DEDIKÁLT TÖMBJE (<DATALIST>-HEZ)
+  const uniqueLocations = useMemo(() => {
+    const set = new Set<string>(['Napelem', 'Otthon', 'Tesla Supercharger', 'Ionity', 'Tea', 'Garázs Tondo']);
+    const safeEv = Array.isArray(evLogs) ? evLogs : [];
+    safeEv.forEach(log => { if (log && log.location) set.add(log.location); });
+    return Array.from(set);
+  }, [evLogs]);
+
+  // --- 4. SZEKCIÓ: API LEKÉRDEZÉSEK ---
   async function fetchMyShares(token: string) {
     try {
       const res = await fetch(`${BACKEND_URL}/api/shares/owned`, { headers: { 'Authorization': `Bearer ${token}` } });
@@ -713,23 +761,6 @@ function MainApp() {
   }
 
   // --- 6. SZEKCIÓ: KALKULÁCIÓS MOTOROK ---
-  const availableGasYears = useMemo(() => {
-    const safeRecords = Array.isArray(records) ? records : [];
-    const yearsSet = new Set<string>();
-    yearsSet.add(new Date().getFullYear().toString());
-
-    safeRecords.forEach((r: any) => {
-      if (r && (r.Type === 'Gáz' || r.Type === 'gáz')) {
-        const y = String(r.FormattedDate || r.Date || '').substring(0, 4);
-        if (y && y.length === 4) {
-          yearsSet.add(y);
-        }
-      }
-    });
-
-    return Array.from(yearsSet).sort().reverse();
-  }, [records]);
-
   const gasYearData = useMemo(() => {
     const safeRecords = Array.isArray(records) ? records : [];
     const safeInvoices = Array.isArray(invoices) ? invoices : [];
