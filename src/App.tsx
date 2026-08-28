@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { 
   BarChart, Bar, XAxis, YAxis, 
   CartesianGrid, Tooltip, ResponsiveContainer, Legend,
-  PieChart, Pie, Cell, Line, ComposedChart, AreaChart, Area
+  PieChart, Pie, Cell, Line, ComposedChart, Area
 } from 'recharts';
 import { GoogleOAuthProvider, GoogleLogin, googleLogout } from '@react-oauth/google';
 import * as jwtDecodeModule from "jwt-decode";
@@ -641,43 +641,6 @@ function MainApp() {
     if (res.ok) fetchMyShares(user.token);
   }
 
-  useEffect(() => {
-    const savedToken = localStorage.getItem('userToken');
-    if (savedToken) handleLoginSuccess(savedToken);
-  }, []);
-
-  useEffect(() => {
-    if (assets.length > 0 && !matrixSelectedAssetId) {
-      setMatrixSelectedAssetId(String(assets[0].Id));
-    }
-  }, [assets]);
-
-  useEffect(() => {
-    const allowed = getAllowedTypes(targetAssetId);
-    if (allowed.length > 0) {
-      if (!type || !allowed.includes(type)) {
-        setType(allowed[0]);
-      }
-    } else {
-      setType('');
-    }
-  }, [targetAssetId, assets, categories, assetCategoryMap]);
-
-  useEffect(() => {
-    const asset = assets.find(a => String(a.Id) === String(targetAssetId));
-    const currentCat = categories.find(c => c.Name === type);
-    if (asset?.Category === 'car' || currentCat?.Type === 'invoice_only' || currentCat?.Type === 'income') {
-      setRecordMode('invoice');
-    }
-  }, [targetAssetId, type, assets, categories]);
-
-  const isMeterDisabled = useMemo(() => {
-    const asset = assets.find(a => String(a.Id) === String(targetAssetId));
-    const currentCat = categories.find(c => c.Name === type);
-    return asset?.Category === 'car' || currentCat?.Type === 'invoice_only' || currentCat?.Type === 'income';
-  }, [targetAssetId, type, assets, categories]);
-
-  // LÁTHATÓ KATEGÓRIÁK HIÁNYZÓ DEFINÍCIÓJÁNAK PÓTLÁSA
   const visibleCategories = useMemo(() => {
     const allowedNames = getAllowedTypes(selectedAssetId);
     return categories.filter(c => allowedNames.includes(c.Name));
@@ -747,8 +710,10 @@ function MainApp() {
     return Array.from(yearsSet).sort().reverse();
   }, [records]);
 
+  // GÁZFOGYASZTÁS & JELLEGGÖRBE CSATLAKOZTATOTT SZÁMLÁKKAL
   const gasYearData = useMemo(() => {
     const safeRecords = Array.isArray(records) ? records : [];
+    const safeInvoices = Array.isArray(invoices) ? invoices : [];
     
     const gasRecs = safeRecords.filter((r: any) => 
       r && (r.Type === 'Gáz' || r.Type === 'gáz') &&
@@ -781,6 +746,7 @@ function MainApp() {
 
     let cumActual = 0;
     let cumLimit = 0;
+    let totalGasCost = 0;
 
     const monthNames = ['Január', 'Február', 'Március', 'Április', 'Május', 'Június', 'Július', 'Augusztus', 'Szeptember', 'Október', 'November', 'December'];
 
@@ -791,6 +757,14 @@ function MainApp() {
       const actualUsage = usageByMonth[yearMonth] || 0;
       const jelleggorbeLimit = GAS_JELLEGGORBE_M3[monthNum] || 0;
 
+      // Adott havi gázszámlák összegének kikeresése
+      const gasCost = safeInvoices.filter((inv: any) => 
+        inv && (inv.Type === 'Gáz' || inv.Type === 'gáz') &&
+        String(inv.Month || '').substring(0, 7) === yearMonth &&
+        (selectedAssetId === 'all' || String(inv.AssetId) === String(selectedAssetId))
+      ).reduce((sum: number, inv: any) => sum + (parseFloat(inv.Amount || 0) || 0), 0);
+
+      totalGasCost += gasCost;
       cumActual += actualUsage;
       cumLimit += jelleggorbeLimit;
 
@@ -804,7 +778,8 @@ function MainApp() {
         jelleggorbeLimit,
         cumActual: Math.round(cumActual * 10) / 10,
         cumLimit,
-        monthlyDiff: Math.round(monthlyDiff * 10) / 10
+        monthlyDiff: Math.round(monthlyDiff * 10) / 10,
+        gasCost: Math.round(gasCost)
       };
     });
 
@@ -817,9 +792,10 @@ function MainApp() {
       yearTotalActual,
       yearRemainingLimit,
       yearOverLimit,
+      totalGasCost,
       annualLimit: ANNUAL_GAS_LIMIT_M3
     };
-  }, [records, selectedGasYear, selectedAssetId]);
+  }, [records, invoices, selectedGasYear, selectedAssetId]);
 
   const solarEnergyBalanceData = useMemo(() => {
     const safeBm = Array.isArray(benchmarks) ? benchmarks : [];
@@ -1144,6 +1120,64 @@ function MainApp() {
               <span>Egyenleg:</span><span>{netTotal > 0 ? '+' : ''}{netTotal.toLocaleString()} {unit}</span>
             </div>
           </div>
+        </div>
+      );
+    }
+    return null;
+  };
+
+  // EGYEDI CÉLZOTT TOOLTIP A GÁZ HÓNAPOS GRAFIKONHOZ
+  const GasCustomTooltip = ({ active, payload }: any) => {
+    if (active && payload && payload.length) {
+      const data = payload[0].payload;
+      return (
+        <div className="custom-tooltip-box">
+          <p className="tooltip-title">{data.monthName} ({data.monthKey})</p>
+          <div className="tooltip-row" style={{ color: '#3b82f6' }}>
+            <span>Tényleges Fogyasztás:</span>
+            <span className="tooltip-val">{data.actualUsage} m³</span>
+          </div>
+          <div className="tooltip-row" style={{ color: '#ef4444' }}>
+            <span>Jelleggörbe Limit:</span>
+            <span className="tooltip-val">{data.jelleggorbeLimit} m³</span>
+          </div>
+          <div className="tooltip-row" style={{ color: data.monthlyDiff >= 0 ? '#10b981' : '#ef4444' }}>
+            <span>Havi Különbség:</span>
+            <span className="tooltip-val">{data.monthlyDiff >= 0 ? '+' : ''}{data.monthlyDiff} m³</span>
+          </div>
+          {data.gasCost > 0 && (
+            <div className="tooltip-row font-emerald" style={{ borderTop: '1px solid #e2e8f0', paddingTop: '4px', marginTop: '4px' }}>
+              <span>Gázszámla összege:</span>
+              <span className="tooltip-val">{data.gasCost.toLocaleString()} Ft</span>
+            </div>
+          )}
+        </div>
+      );
+    }
+    return null;
+  };
+
+  // EGYEDI CÉLZOTT TOOLTIP A GÁZ KUMULÁLT GRAFIKONHOZ
+  const GasCumCustomTooltip = ({ active, payload }: any) => {
+    if (active && payload && payload.length) {
+      const data = payload[0].payload;
+      return (
+        <div className="custom-tooltip-box">
+          <p className="tooltip-title">{data.monthName} ({data.monthKey})</p>
+          <div className="tooltip-row" style={{ color: '#4f46e5' }}>
+            <span>Halmozott Fogyasztás:</span>
+            <span className="tooltip-val">{data.cumActual} m³</span>
+          </div>
+          <div className="tooltip-row" style={{ color: '#ef4444' }}>
+            <span>Halmozott Keret Plafon:</span>
+            <span className="tooltip-val">{data.cumLimit} m³</span>
+          </div>
+          {data.gasCost > 0 && (
+            <div className="tooltip-row font-emerald" style={{ borderTop: '1px solid #e2e8f0', paddingTop: '4px', marginTop: '4px' }}>
+              <span>Gázszámla összege:</span>
+              <span className="tooltip-val">{data.gasCost.toLocaleString()} Ft</span>
+            </div>
+          )}
         </div>
       );
     }
@@ -1480,7 +1514,7 @@ function MainApp() {
                       <div className="ui-widget-card kpi-tile">
                         <span className="kpi-label">{selectedGasYear}. Évi Fogyasztás</span>
                         <span className="kpi-value font-emerald">{gasYearData.yearTotalActual.toLocaleString()} m³</span>
-                        <small className="kpi-sub">Gázóra leolvasások alapján</small>
+                        <small className="kpi-sub">Gázszámlák összege: {gasYearData.totalGasCost.toLocaleString()} Ft</small>
                       </div>
 
                       <div className="ui-widget-card kpi-tile">
@@ -1492,6 +1526,7 @@ function MainApp() {
                       </div>
                     </div>
 
+                    {/* 1. GRAFIKON: HAVI FOGYASZTÁS VS JELLEGGÖRBE LIMIT */}
                     <div className="ui-widget-card">
                       <h3 className="card-heading-clean">📊 Havi Gázfogyasztás vs. Rezsikeret ({selectedGasYear})</h3>
                       <ResponsiveContainer width="100%" height={260}>
@@ -1499,7 +1534,7 @@ function MainApp() {
                           <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
                           <XAxis dataKey="monthName" fontSize={11} stroke="#64748b" tickLine={false} />
                           <YAxis fontSize={11} stroke="#64748b" tickLine={false} axisLine={false} width={45} label={{ value: 'm³', angle: -90, position: 'insideLeft', style: { fontSize: '10px' } }} />
-                          <Tooltip formatter={(val: any, name: any) => [`${val} m³`, name === 'actualUsage' ? 'Tényleges Fogyasztás' : 'Jelleggörbe Limit']} />
+                          <Tooltip content={<GasCustomTooltip />} />
                           <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
                           <Bar dataKey="actualUsage" name="Tényleges Fogyasztás (m³)" fill="#3b82f6" radius={[4,4,0,0]} />
                           <Line type="monotone" dataKey="jelleggorbeLimit" name="Jelleggörbe Limit (m³)" stroke="#ef4444" strokeWidth={3} strokeDasharray="5 5" dot={{ r: 4 }} />
@@ -1507,18 +1542,19 @@ function MainApp() {
                       </ResponsiveContainer>
                     </div>
 
+                    {/* 2. GRAFIKON: HALMOZOTT FOGYASZTÁS VS KEREI KERET (COMPOSED CHART-RA CSERÉLVE A PIROS VONAL MIATT!) */}
                     <div className="ui-widget-card">
                       <h3 className="card-heading-clean">📈 Halmozott Éves Fogyasztás vs. Keretösszeg ({selectedGasYear})</h3>
                       <ResponsiveContainer width="100%" height={240}>
-                        <AreaChart data={gasYearData.monthlyList} margin={{ top: 10, right: 15, left: 10, bottom: 0 }}>
+                        <ComposedChart data={gasYearData.monthlyList} margin={{ top: 10, right: 15, left: 10, bottom: 0 }}>
                           <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
                           <XAxis dataKey="monthName" fontSize={11} stroke="#64748b" tickLine={false} />
-                          <YAxis fontSize={11} stroke="#64748b" tickLine={false} axisLine={false} width={45} label={{ value: 'Kumulált m³', angle: -90, position: 'insideLeft', style: { fontSize: '10px' } }} />
-                          <Tooltip formatter={(val: any, name: any) => [`${val} m³`, name === 'cumActual' ? 'Halmozott Fogyasztás' : 'Halmozott Keret']} />
+                          <YAxis domain={[0, 1800]} fontSize={11} stroke="#64748b" tickLine={false} axisLine={false} width={45} label={{ value: 'Kumulált m³', angle: -90, position: 'insideLeft', style: { fontSize: '10px' } }} />
+                          <Tooltip content={<GasCumCustomTooltip />} />
                           <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
                           <Area type="monotone" dataKey="cumActual" name="Halmozott Fogyasztás (m³)" fill="#e0e7ff" stroke="#4f46e5" strokeWidth={2} />
                           <Line type="monotone" dataKey="cumLimit" name="Halmozott Keret Plafon (m³)" stroke="#ef4444" strokeWidth={3} strokeDasharray="3 3" dot={false} />
-                        </AreaChart>
+                        </ComposedChart>
                       </ResponsiveContainer>
                     </div>
 
