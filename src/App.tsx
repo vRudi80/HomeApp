@@ -2,12 +2,11 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { 
   BarChart, Bar, XAxis, YAxis, 
   CartesianGrid, Tooltip, ResponsiveContainer, Legend,
-  PieChart, Pie, Cell, Line, ComposedChart
+  PieChart, Pie, Cell, Line, ComposedChart, AreaChart, Area
 } from 'recharts';
 import { GoogleOAuthProvider, GoogleLogin, googleLogout } from '@react-oauth/google';
 import * as jwtDecodeModule from "jwt-decode";
 
-// MINTA ES V4 HIBATŰRŐ JWT DEKÓDER IMPORTER
 const jwtDecode: any = (jwtDecodeModule as any).jwtDecode || (jwtDecodeModule as any).default || jwtDecodeModule;
 
 const BACKEND_URL = "https://react-ideas-backend.onrender.com";
@@ -17,7 +16,23 @@ const PIE_COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6'];
 
 const ADMIN_EMAILS = ['kovari.rudolf@gmail.com'];
 
-// REACT ERROR BOUNDARY - MEGAKADÁLYOZZA A FEHÉR KÉPERNYŐT
+// HIVATALOS LAKOSSÁGI GÁZ JELLEGGÖRBE (1729 m3 / év eloszlása hónapokra)
+const GAS_JELLEGGORBE_M3: { [month: string]: number } = {
+  '01': 304,
+  '02': 262,
+  '03': 214,
+  '04': 115,
+  '05': 46,
+  '06': 24,
+  '07': 24,
+  '08': 31,
+  '09': 56,
+  '10': 135,
+  '11': 226,
+  '12': 292
+};
+const ANNUAL_GAS_LIMIT_M3 = 1729;
+
 class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean; error: any }> {
   constructor(props: any) {
     super(props);
@@ -89,7 +104,9 @@ function MainApp() {
   const [selectedAssetId, setSelectedAssetId] = useState<string>('all');
   
   const [activeTab, setActiveTab] = useState<'dashboard' | 'transactions' | 'settings' | 'ev-solar' | 'rental'>('dashboard');
-  
+  const [dashboardViewMode, setDashboardViewMode] = useState<'general' | 'gas_jelleggorbe'>('general');
+  const [selectedGasYear, setSelectedGasYear] = useState<string>(new Date().getFullYear().toString());
+
   const [txSearch, setTxSearch] = useState('');
   const [txAssetFilter, setTxAssetFilter] = useState('all');
   const [txCategoryFilter, setTxCategoryFilter] = useState('all');
@@ -625,47 +642,6 @@ function MainApp() {
     if (res.ok) fetchMyShares(user.token);
   }
 
-  useEffect(() => {
-    const savedToken = localStorage.getItem('userToken');
-    if (savedToken) handleLoginSuccess(savedToken);
-  }, []);
-
-  useEffect(() => {
-    if (assets.length > 0 && !matrixSelectedAssetId) {
-      setMatrixSelectedAssetId(String(assets[0].Id));
-    }
-  }, [assets]);
-
-  useEffect(() => {
-    const allowed = getAllowedTypes(targetAssetId);
-    if (allowed.length > 0) {
-      if (!type || !allowed.includes(type)) {
-        setType(allowed[0]);
-      }
-    } else {
-      setType('');
-    }
-  }, [targetAssetId, assets, categories, assetCategoryMap]);
-
-  useEffect(() => {
-    const asset = assets.find(a => String(a.Id) === String(targetAssetId));
-    const currentCat = categories.find(c => c.Name === type);
-    if (asset?.Category === 'car' || currentCat?.Type === 'invoice_only' || currentCat?.Type === 'income') {
-      setRecordMode('invoice');
-    }
-  }, [targetAssetId, type, assets, categories]);
-
-  const isMeterDisabled = useMemo(() => {
-    const asset = assets.find(a => String(a.Id) === String(targetAssetId));
-    const currentCat = categories.find(c => c.Name === type);
-    return asset?.Category === 'car' || currentCat?.Type === 'invoice_only' || currentCat?.Type === 'income';
-  }, [targetAssetId, type, assets, categories]);
-
-  const visibleCategories = useMemo(() => {
-    const allowedNames = getAllowedTypes(selectedAssetId);
-    return categories.filter(c => allowedNames.includes(c.Name));
-  }, [categories, selectedAssetId, assetCategoryMap]);
-
   const combinedList = useMemo(() => {
     const safeRecords = Array.isArray(records) ? records : [];
     const safeInvoices = Array.isArray(invoices) ? invoices : [];
@@ -712,6 +688,99 @@ function MainApp() {
     safeEv.forEach(log => { if (log && log.location) set.add(log.location); });
     return Array.from(set);
   }, [evLogs]);
+
+  // ELÉRHE TŐ GÁZ ÉVEK DINAMIKUS LISTÁJA
+  const availableGasYears = useMemo(() => {
+    const safeRecords = Array.isArray(records) ? records : [];
+    const yearsSet = new Set<string>();
+    yearsSet.add(new Date().getFullYear().toString());
+
+    safeRecords.forEach((r: any) => {
+      if (r && (r.Type === 'Gáz' || r.Type === 'gáz')) {
+        const y = String(r.FormattedDate || r.Date || '').substring(0, 4);
+        if (y && y.length === 4) {
+          yearsSet.add(y);
+        }
+      }
+    });
+
+    return Array.from(yearsSet).sort().reverse();
+  }, [records]);
+
+  // DINAMIKUS GÁZFOGYASZTÁS ÉS REZSITÁMOGATOTT JELLEGGÖRBE MOTOR
+  const gasYearData = useMemo(() => {
+    const safeRecords = Array.isArray(records) ? records : [];
+    
+    const gasRecs = safeRecords.filter((r: any) => 
+      r && (r.Type === 'Gáz' || r.Type === 'gáz') &&
+      (selectedAssetId === 'all' || String(r.AssetId) === String(selectedAssetId))
+    );
+
+    const sortedGas = gasRecs.sort((a: any, b: any) => 
+      String(a.FormattedDate || a.Date || '').localeCompare(String(b.FormattedDate || b.Date || ''))
+    );
+
+    const firstReadingPerMonth: { [key: string]: number } = {};
+    sortedGas.forEach((r: any) => {
+      const monthKey = String(r.FormattedDate || r.Date || '').substring(0, 7);
+      if (monthKey && firstReadingPerMonth[monthKey] === undefined) {
+        firstReadingPerMonth[monthKey] = parseFloat(r.Value || 0) || 0;
+      }
+    });
+
+    const monthKeys = Object.keys(firstReadingPerMonth).sort();
+    const usageByMonth: { [month: string]: number } = {};
+
+    for (let i = 0; i < monthKeys.length - 1; i++) {
+      const mCurr = monthKeys[i];
+      const mNext = monthKeys[i + 1];
+      const diff = firstReadingPerMonth[mNext] - firstReadingPerMonth[mCurr];
+      if (diff >= 0) {
+        usageByMonth[mCurr] = diff;
+      }
+    }
+
+    let cumActual = 0;
+    let cumLimit = 0;
+
+    const monthNames = ['Január', 'Február', 'Március', 'Április', 'Május', 'Június', 'Július', 'Augusztus', 'Szeptember', 'Október', 'November', 'December'];
+
+    const monthlyList = monthNames.map((mName, idx) => {
+      const monthNum = String(idx + 1).padStart(2, '0');
+      const yearMonth = `${selectedGasYear}-${monthNum}`;
+      
+      const actualUsage = usageByMonth[yearMonth] || 0;
+      const jelleggorbeLimit = GAS_JELLEGGORBE_M3[monthNum] || 0;
+
+      cumActual += actualUsage;
+      cumLimit += jelleggorbeLimit;
+
+      const monthlyDiff = jelleggorbeLimit - actualUsage;
+
+      return {
+        monthKey: yearMonth,
+        monthName: mName,
+        monthNum,
+        actualUsage: Math.round(actualUsage * 10) / 10,
+        jelleggorbeLimit,
+        cumActual: Math.round(cumActual * 10) / 10,
+        cumLimit,
+        monthlyDiff: Math.round(monthlyDiff * 10) / 10
+      };
+    });
+
+    const yearTotalActual = Math.round(cumActual * 10) / 10;
+    const yearRemainingLimit = Math.max(0, ANNUAL_GAS_LIMIT_M3 - yearTotalActual);
+    const yearOverLimit = Math.max(0, yearTotalActual - ANNUAL_GAS_LIMIT_M3);
+
+    return {
+      monthlyList,
+      yearTotalActual,
+      yearRemainingLimit,
+      yearOverLimit,
+      annualLimit: ANNUAL_GAS_LIMIT_M3
+    };
+  }, [records, selectedGasYear, selectedAssetId]);
 
   const solarEnergyBalanceData = useMemo(() => {
     const safeBm = Array.isArray(benchmarks) ? benchmarks : [];
@@ -1207,115 +1276,219 @@ function MainApp() {
               </aside>
 
               <section className="main-viewport-pane">
-                <div className="ui-widget-card">
-                  <div className="grid-wrapping-chips">
+                
+                {/* NÉZETVÁLTÓ KAPCSOLÓ (ÁLTALÁNOS vs GÁZFOGYASZTÁS & JELLEGGÖRBE) */}
+                <div className="ui-widget-card" style={{ padding: '12px 20px' }}>
+                  <div className="mode-toggle-pill" style={{ margin: 0 }}>
                     <button 
-                      className={`grid-chip-item ${filter.includes('Összes') ? 'active' : ''}`} 
-                      onClick={() => handleCategoryFilterClick('Összes')} 
-                      style={filter.includes('Összes') ? {backgroundColor: getColor('Összes'), color:'white'} : {}}
+                      className={`pill-item ${dashboardViewMode === 'general' ? 'active' : ''}`} 
+                      onClick={() => setDashboardViewMode('general')}
                     >
-                      📊 Összesen
+                      📊 Általános Rezsiköltségek
                     </button>
-                    
-                    {displayMode === 'cost' && (
-                      <button 
-                        className={`grid-chip-item ${filter.includes('Összes kiadás') ? 'active' : ''}`} 
-                        onClick={() => handleCategoryFilterClick('Összes kiadás')} 
-                        style={filter.includes('Összes kiadás') ? {backgroundColor: getColor('Összes kiadás'), color:'white'} : {}}
-                      >
-                        📉 Összes kiadás
-                      </button>
-                    )}
-                    
-                    {visibleCategories.map(c => {
-                      const isSelected = filter.includes(c.Name);
-                      return (
-                        <button 
-                          key={c.Id} 
-                          className={`grid-chip-item ${isSelected ? 'active' : ''}`} 
-                          onClick={() => handleCategoryFilterClick(c.Name)} 
-                          style={isSelected ? {backgroundColor: getColor(c.Name), color: 'white'} : {}}
-                        >
-                          {c.Icon} {c.Name}
-                        </button>
-                      );
-                    })}
+                    <button 
+                      className={`pill-item ${dashboardViewMode === 'gas_jelleggorbe' ? 'active' : ''}`} 
+                      onClick={() => setDashboardViewMode('gas_jelleggorbe')}
+                    >
+                      🔥 Gázfogyasztás & Jelleggörbe (1729 m³)
+                    </button>
                   </div>
+                </div>
 
-                  <div className="chart-filter-controls-row">
-                    <div className="controls-left-side-modes">
-                      <div className="compact-btn-group">
-                        <button className={displayMode === 'usage' ? 'active' : ''} onClick={() => setDisplayMode('usage')}>Fogyasztás</button>
-                        <button className={displayMode === 'cost' ? 'active' : ''} onClick={() => setDisplayMode('cost')}>Költség</button>
+                {dashboardViewMode === 'general' ? (
+                  <>
+                    <div className="ui-widget-card">
+                      <div className="grid-wrapping-chips">
+                        <button 
+                          className={`grid-chip-item ${filter.includes('Összes') ? 'active' : ''}`} 
+                          onClick={() => handleCategoryFilterClick('Összes')} 
+                          style={filter.includes('Összes') ? {backgroundColor: getColor('Összes'), color:'white'} : {}}
+                        >
+                          📊 Összesen
+                        </button>
+                        
+                        {displayMode === 'cost' && (
+                          <button 
+                            className={`grid-chip-item ${filter.includes('Összes kiadás') ? 'active' : ''}`} 
+                            onClick={() => handleCategoryFilterClick('Összes kiadás')} 
+                            style={filter.includes('Összes kiadás') ? {backgroundColor: getColor('Összes kiadás'), color:'white'} : {}}
+                          >
+                            📉 Összes kiadás
+                          </button>
+                        )}
+                        
+                        {visibleCategories.map(c => {
+                          const isSelected = filter.includes(c.Name);
+                          return (
+                            <button 
+                              key={c.Id} 
+                              className={`grid-chip-item ${isSelected ? 'active' : ''}`} 
+                              onClick={() => handleCategoryFilterClick(c.Name)} 
+                              style={isSelected ? {backgroundColor: getColor(c.Name), color: 'white'} : {}}
+                            >
+                              {c.Icon} {c.Name}
+                            </button>
+                          );
+                        })}
                       </div>
-                      <div className="compact-btn-group">
-                        <button className={viewMode === 'monthly' ? 'active' : ''} onClick={() => setViewMode('monthly')}>Havi</button>
-                        <button className={viewMode === 'annual' ? 'active' : ''} onClick={() => setViewMode('annual')}>Éves</button>
+
+                      <div className="chart-filter-controls-row">
+                        <div className="controls-left-side-modes">
+                          <div className="compact-btn-group">
+                            <button className={displayMode === 'usage' ? 'active' : ''} onClick={() => setDisplayMode('usage')}>Fogyasztás</button>
+                            <button className={displayMode === 'cost' ? 'active' : ''} onClick={() => setDisplayMode('cost')}>Költség</button>
+                          </div>
+                          <div className="compact-btn-group">
+                            <button className={viewMode === 'monthly' ? 'active' : ''} onClick={() => setViewMode('monthly')}>Havi</button>
+                            <button className={viewMode === 'annual' ? 'active' : ''} onClick={() => setViewMode('annual')}>Éves</button>
+                          </div>
+                        </div>
+
+                        <div className="controls-right-side-dates">
+                          <select className="form-control-select styled-range-select" value={chartRange} onChange={(e) => { const val = e.target.value; setChartRange(val === 'all' || val === 'custom' ? val : parseInt(val)); }}>
+                            {viewMode === 'monthly' && <option value={6}>Utolsó 6 hónap</option>}
+                            {viewMode === 'monthly' && <option value={12}>Utolsó 12 hónap</option>}
+                            {viewMode === 'monthly' && <option value={24}>Utolsó 24 hónap</option>}
+                            <option value="all">Minden korábbi adat</option>
+                            <option value="custom">Egyedi időszak...</option>
+                          </select>
+
+                          {chartRange === 'custom' && (
+                            <div className="custom-range-inputs-wrapper">
+                              <input type="month" className="small-date-input" value={customStartDate} onChange={(e) => setCustomStartDate(e.target.value)} />
+                              <span className="date-separator">-</span>
+                              <input type="month" className="small-date-input" value={customEndDate} onChange={(e) => setCustomEndDate(e.target.value)} />
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
 
-                    <div className="controls-right-side-dates">
-                      <select className="form-control-select styled-range-select" value={chartRange} onChange={(e) => { const val = e.target.value; setChartRange(val === 'all' || val === 'custom' ? val : parseInt(val)); }}>
-                        {viewMode === 'monthly' && <option value={6}>Utolsó 6 hónap</option>}
-                        {viewMode === 'monthly' && <option value={12}>Utolsó 12 hónap</option>}
-                        {viewMode === 'monthly' && <option value={24}>Utolsó 24 hónap</option>}
-                        <option value="all">Minden korábbi adat</option>
-                        <option value="custom">Egyedi időszak...</option>
-                      </select>
-
-                      {chartRange === 'custom' && (
-                        <div className="custom-range-inputs-wrapper">
-                          <input type="month" className="small-date-input" value={customStartDate} onChange={(e) => setCustomStartDate(e.target.value)} />
-                          <span className="date-separator">-</span>
-                          <input type="month" className="small-date-input" value={customEndDate} onChange={(e) => setCustomEndDate(e.target.value)} />
+                    <div className="ui-widget-card">
+                      {assets.length > 0 ? (
+                        <ResponsiveContainer width="100%" height={320}>
+                          <BarChart data={chartData} margin={{ top: 10, right: 15, left: 10, bottom: 0 }}>
+                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                            <XAxis dataKey="label" fontSize={11} stroke="#64748b" tickLine={false} />
+                            <YAxis 
+                              fontSize={11} 
+                              stroke="#64748b" 
+                              tickLine={false} 
+                              axisLine={false} 
+                              width={65}
+                              tickFormatter={(val) => val >= 1000 ? `${(val / 1000).toLocaleString()}k` : val}
+                            />
+                            <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(0,0,0,0.01)' }} />
+                            <Legend content={renderCustomLegend} />
+                            
+                            {(selectedAssetId === 'all' ? assets : assets.filter(a => String(a.Id) === String(selectedAssetId))).map((asset, idx) => {
+                              const color = ASSET_COLORS[idx % ASSET_COLORS.length];
+                              return (
+                                <React.Fragment key={asset.Id}>
+                                  <Bar dataKey={asset.FriendlyName} name={asset.FriendlyName} stackId="expense" fill={color} radius={[3,3,0,0]} />
+                                  <Bar 
+                                    dataKey={`${asset.FriendlyName}_income`} 
+                                    name={`${asset.FriendlyName} (Bevétel)`} 
+                                    stackId="income" 
+                                    fill={color} 
+                                    opacity={0.45} 
+                                    radius={[3,3,0,0]}
+                                  />
+                                </React.Fragment>
+                              );
+                            })}
+                          </BarChart>
+                        </ResponsiveContainer>
+                      ) : (
+                        <div className="empty-state-text" style={{ padding: '40px 20px' }}>
+                          <h3>🌐 Nincs megjeleníthető adat</h3>
+                          <p>Még nincs eszköz rögzítve ehhez a fiókhoz. Lépj a <b>Beállítások</b> fülre új eszköz hozzáadásához!</p>
                         </div>
                       )}
                     </div>
-                  </div>
-                </div>
+                  </>
+                ) : (
+                  /* ================= ÚJ: GÁZFOGYASZTÁS & JELLEGGÖRBE NÉZET ================= */
+                  <div className="form-stack-vertical">
+                    
+                    {/* ÉVSZŰRŐ ÉS INFORMÁCIÓS SÁV */}
+                    <div className="ui-widget-card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+                      <div>
+                        <h3 className="card-heading-clean" style={{ margin: 0 }}>🔥 Gázfogyasztási Jelleggörbe Elemzés</h3>
+                        <small style={{ color: '#64748b' }}>A magyarországi rezsitámogatott keret (1 729 m³/év) hőmérsékletfüggő eloszlása szerint</small>
+                      </div>
 
-                <div className="ui-widget-card">
-                  {assets.length > 0 ? (
-                    <ResponsiveContainer width="100%" height={320}>
-                      <BarChart data={chartData} margin={{ top: 10, right: 15, left: 10, bottom: 0 }}>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                        <XAxis dataKey="label" fontSize={11} stroke="#64748b" tickLine={false} />
-                        <YAxis 
-                          fontSize={11} 
-                          stroke="#64748b" 
-                          tickLine={false} 
-                          axisLine={false} 
-                          width={65}
-                          tickFormatter={(val) => val >= 1000 ? `${(val / 1000).toLocaleString()}k` : val}
-                        />
-                        <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(0,0,0,0.01)' }} />
-                        <Legend content={renderCustomLegend} />
-                        
-                        {(selectedAssetId === 'all' ? assets : assets.filter(a => String(a.Id) === String(selectedAssetId))).map((asset, idx) => {
-                          const color = ASSET_COLORS[idx % ASSET_COLORS.length];
-                          return (
-                            <React.Fragment key={asset.Id}>
-                              <Bar dataKey={asset.FriendlyName} name={asset.FriendlyName} stackId="expense" fill={color} radius={[3,3,0,0]} />
-                              <Bar 
-                                dataKey={`${asset.FriendlyName}_income`} 
-                                name={`${asset.FriendlyName} (Bevétel)`} 
-                                stackId="income" 
-                                fill={color} 
-                                opacity={0.45} 
-                                radius={[3,3,0,0]}
-                              />
-                            </React.Fragment>
-                          );
-                        })}
-                      </BarChart>
-                    </ResponsiveContainer>
-                  ) : (
-                    <div className="empty-state-text" style={{ padding: '40px 20px' }}>
-                      <h3>🌐 Nincs megjeleníthető adat</h3>
-                      <p>Még nincs eszköz rögzítve ehhez a fiókhoz. Lépj a <b>Beállítások</b> fülre új eszköz hozzáadásához!</p>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <label className="input-label-flat" style={{ margin: 0 }}>Év szűrése:</label>
+                        <select 
+                          className="form-control-select styled-range-select" 
+                          value={selectedGasYear} 
+                          onChange={(e) => setSelectedGasYear(e.target.value)}
+                        >
+                          {availableGasYears.map(yr => (
+                            <option key={yr} value={yr}>{yr}. év</option>
+                          ))}
+                        </select>
+                      </div>
                     </div>
-                  )}
-                </div>
+
+                    {/* ÉVES KPI KÁRTYÁK */}
+                    <div className="kpi-cards-flex-grid">
+                      <div className="ui-widget-card kpi-tile">
+                        <span className="kpi-label">Támogatott Éves Keret</span>
+                        <span className="kpi-value">{gasYearData.annualLimit.toLocaleString()} m³</span>
+                        <small className="kpi-sub">Éves lakossági maximális limit</small>
+                      </div>
+
+                      <div className="ui-widget-card kpi-tile">
+                        <span className="kpi-label">{selectedGasYear}. Évi Fogyasztás</span>
+                        <span className="kpi-value font-emerald">{gasYearData.yearTotalActual.toLocaleString()} m³</span>
+                        <small className="kpi-sub">Gázóra leolvasások alapján</small>
+                      </div>
+
+                      <div className="ui-widget-card kpi-tile">
+                        <span className="kpi-label">Maradék Éves Keret</span>
+                        <span className="kpi-value" style={{ color: gasYearData.yearRemainingLimit > 0 ? '#10b981' : '#ef4444' }}>
+                          {gasYearData.yearRemainingLimit.toLocaleString()} m³
+                        </span>
+                        <small className="kpi-sub">{gasYearData.yearOverLimit > 0 ? `⚠️ Túllépés: ${gasYearData.yearOverLimit.toLocaleString()} m³` : 'Biztonságos támogatott sávban'}</small>
+                      </div>
+                    </div>
+
+                    {/* 1. GRAFIKON: HAVI FOGYASZTÁS VS JELLEGGÖRBE LIMIT */}
+                    <div className="ui-widget-card">
+                      <h3 className="card-heading-clean">📊 Havi Gázfogyasztás vs. Rezsikeret ({selectedGasYear})</h3>
+                      <ResponsiveContainer width="100%" height={260}>
+                        <ComposedChart data={gasYearData.monthlyList} margin={{ top: 10, right: 15, left: 10, bottom: 0 }}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                          <XAxis dataKey="monthName" fontSize={11} stroke="#64748b" tickLine={false} />
+                          <YAxis fontSize={11} stroke="#64748b" tickLine={false} axisLine={false} width={45} label={{ value: 'm³', angle: -90, position: 'insideLeft', style: { fontSize: '10px' } }} />
+                          <Tooltip formatter={(val: any, name: any) => [`${val} m³`, name === 'actualUsage' ? 'Tényleges Fogyasztás' : 'Jelleggörbe Limit']} />
+                          <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
+                          <Bar dataKey="actualUsage" name="Tényleges Fogyasztás (m³)" fill="#3b82f6" radius={[4,4,0,0]} />
+                          <Line type="monotone" dataKey="jelleggorbeLimit" name="Jelleggörbe Limit (m³)" stroke="#ef4444" strokeWidth={3} strokeDasharray="5 5" dot={{ r: 4 }} />
+                        </ComposedChart>
+                      </ResponsiveContainer>
+                    </div>
+
+                    {/* 2. GRAFIKON: KUMULÁLT ÁLLÁS AZ ÉV SORÁN */}
+                    <div className="ui-widget-card">
+                      <h3 className="card-heading-clean">📈 Halmozott Éves Fogyasztás vs. Keretösszeg ({selectedGasYear})</h3>
+                      <ResponsiveContainer width="100%" height={240}>
+                        <AreaChart data={gasYearData.monthlyList} margin={{ top: 10, right: 15, left: 10, bottom: 0 }}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                          <XAxis dataKey="monthName" fontSize={11} stroke="#64748b" tickLine={false} />
+                          <YAxis fontSize={11} stroke="#64748b" tickLine={false} axisLine={false} width={45} label={{ value: 'Kumulált m³', angle: -90, position: 'insideLeft', style: { fontSize: '10px' } }} />
+                          <Tooltip formatter={(val: any, name: any) => [`${val} m³`, name === 'cumActual' ? 'Halmozott Fogyasztás' : 'Halmozott Keret']} />
+                          <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
+                          <Area type="monotone" dataKey="cumActual" name="Halmozott Fogyasztás (m³)" fill="#e0e7ff" stroke="#4f46e5" strokeWidth={2} />
+                          <Line type="monotone" dataKey="cumLimit" name="Halmozott Keret Plafon (m³)" stroke="#ef4444" strokeWidth={3} strokeDasharray="3 3" dot={false} />
+                        </AreaChart>
+                      </ResponsiveContainer>
+                    </div>
+
+                  </div>
+                )}
               </section>
             </div>
           )}
@@ -2178,7 +2351,6 @@ function MainApp() {
   );
 }
 
-// BIZTONSÁGI VÉDŐRÉTEGGEL CSOMAGOLT CSOMÓPONT EXPORTALÁSA
 export default function App() {
   return (
     <ErrorBoundary>
