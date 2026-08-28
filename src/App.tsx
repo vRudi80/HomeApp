@@ -641,6 +641,48 @@ function MainApp() {
     if (res.ok) fetchMyShares(user.token);
   }
 
+  useEffect(() => {
+    const savedToken = localStorage.getItem('userToken');
+    if (savedToken) handleLoginSuccess(savedToken);
+  }, []);
+
+  useEffect(() => {
+    if (assets.length > 0 && !matrixSelectedAssetId) {
+      setMatrixSelectedAssetId(String(assets[0].Id));
+    }
+  }, [assets]);
+
+  useEffect(() => {
+    const allowed = getAllowedTypes(targetAssetId);
+    if (allowed.length > 0) {
+      if (!type || !allowed.includes(type)) {
+        setType(allowed[0]);
+      }
+    } else {
+      setType('');
+    }
+  }, [targetAssetId, assets, categories, assetCategoryMap]);
+
+  useEffect(() => {
+    const asset = assets.find(a => String(a.Id) === String(targetAssetId));
+    const currentCat = categories.find(c => c.Name === type);
+    if (asset?.Category === 'car' || currentCat?.Type === 'invoice_only' || currentCat?.Type === 'income') {
+      setRecordMode('invoice');
+    }
+  }, [targetAssetId, type, assets, categories]);
+
+  const isMeterDisabled = useMemo(() => {
+    const asset = assets.find(a => String(a.Id) === String(targetAssetId));
+    const currentCat = categories.find(c => c.Name === type);
+    return asset?.Category === 'car' || currentCat?.Type === 'invoice_only' || currentCat?.Type === 'income';
+  }, [targetAssetId, type, assets, categories]);
+
+  // LÁTHATÓ KATEGÓRIÁK HIÁNYZÓ DEFINÍCIÓJÁNAK PÓTLÁSA
+  const visibleCategories = useMemo(() => {
+    const allowedNames = getAllowedTypes(selectedAssetId);
+    return categories.filter(c => allowedNames.includes(c.Name));
+  }, [categories, selectedAssetId, assetCategoryMap]);
+
   const combinedList = useMemo(() => {
     const safeRecords = Array.isArray(records) ? records : [];
     const safeInvoices = Array.isArray(invoices) ? invoices : [];
