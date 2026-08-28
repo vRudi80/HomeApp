@@ -336,7 +336,7 @@ function MainApp() {
     return allCatNames;
   }
 
-  // --- 3. SZEKCIÓ: MEMOIZÁLT LISTÁK ÉS KORLÁTOZÁSOK ---
+  // --- 3. SZEKCIÓ: MEMOIZÁLT LISTÁK ÉS SZŰRŐK (PONTOS DEKLARÁCIÓS SORREND) ---
   const visibleCategories = useMemo(() => {
     const allowedNames = getAllowedTypes(selectedAssetId);
     return categories.filter(c => allowedNames.includes(c.Name));
@@ -388,13 +388,29 @@ function MainApp() {
     });
   }, [combinedList, txSearch, txAssetFilter, txCategoryFilter, assets]);
 
-  // AKKU TÖLTŐHELYEK DEDIKÁLT TÖMBJE (<DATALIST>-HEZ)
   const uniqueLocations = useMemo(() => {
     const set = new Set<string>(['Napelem', 'Otthon', 'Tesla Supercharger', 'Ionity', 'Tea', 'Garázs Tondo']);
     const safeEv = Array.isArray(evLogs) ? evLogs : [];
     safeEv.forEach(log => { if (log && log.location) set.add(log.location); });
     return Array.from(set);
   }, [evLogs]);
+
+  const availableGasYears = useMemo(() => {
+    const safeRecords = Array.isArray(records) ? records : [];
+    const yearsSet = new Set<string>();
+    yearsSet.add(new Date().getFullYear().toString());
+
+    safeRecords.forEach((r: any) => {
+      if (r && (r.Type === 'Gáz' || r.Type === 'gáz')) {
+        const y = String(r.FormattedDate || r.Date || '').substring(0, 4);
+        if (y && y.length === 4) {
+          yearsSet.add(y);
+        }
+      }
+    });
+
+    return Array.from(yearsSet).sort().reverse();
+  }, [records]);
 
   // --- 4. SZEKCIÓ: API LEKÉRDEZÉSEK ---
   async function fetchMyShares(token: string) {
@@ -760,7 +776,7 @@ function MainApp() {
     if (res.ok) fetchMyShares(user.token);
   }
 
-  // --- 6. SZEKCIÓ: KALKULÁCIÓS MOTOROK ---
+  // --- 6. SZEKCIÓ: ELEMZŐ MOTOROK ---
   const gasYearData = useMemo(() => {
     const safeRecords = Array.isArray(records) ? records : [];
     const safeInvoices = Array.isArray(invoices) ? invoices : [];
@@ -1808,7 +1824,7 @@ function MainApp() {
                           </div>
                           <div style={{ flex: 1 }}>
                             <label className="input-label-flat">Költség (Ft)</label>
-                            <input type="number" className="form-control-select" placeholder="Ft" value={newEvLog.cost_huf} onChange={(e) => setNewEvLog({...newEvLog, cost_huf: e.target.value})} />
+                            <input type="number" className="form-control-select" value={newEvLog.cost_huf} onChange={(e) => setNewEvLog({...newEvLog, cost_huf: e.target.value})} />
                           </div>
                         </div>
 
