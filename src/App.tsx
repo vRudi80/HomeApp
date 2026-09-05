@@ -413,6 +413,39 @@ function MainApp() {
     return Array.from(yearsSet).sort().reverse();
   }, [records]);
 
+  // AKKUMULÁTOR TÖLTÉSI NAPLÓ PONTOS ENERGIA KALKULÁCIÓVAL (SPRITMONITOR LOGIKA)
+  const parsedEvLogsWithEnergy = useMemo(() => {
+    const safeEv = Array.isArray(evLogs) ? evLogs : [];
+    const sorted = safeEv.slice().sort((a, b) => String(a?.date || '').localeCompare(String(b?.date || '')));
+    
+    return sorted.map((log, idx) => {
+      const km = parseFloat(log?.driven_km || 0) || 0;
+      const kwh = parseFloat(log?.kwh_amount || 0) || 0;
+      const cost = parseFloat(log?.cost_huf || 0) || 0;
+      
+      const sSoc = (log?.start_soc !== null && log?.start_soc !== undefined && log?.start_soc !== '') ? parseFloat(log.start_soc) : null;
+      
+      const prevLog = idx > 0 ? sorted[idx - 1] : null;
+      const prevESoc = (prevLog?.end_soc !== null && prevLog?.end_soc !== undefined && prevLog?.end_soc !== '') ? parseFloat(prevLog.end_soc) : null;
+
+      let usedKwh = kwh;
+      if (prevESoc !== null && sSoc !== null && !isNaN(prevESoc) && !isNaN(sSoc) && prevESoc > sSoc) {
+        usedKwh = (prevESoc - sSoc) * (BATTERY_CAPACITY_KWH / 100.0);
+      }
+
+      const logAvg = km > 0 ? (usedKwh / km) * 100.0 : 0.0;
+
+      return {
+        ...log,
+        km,
+        kwhCharged: kwh,
+        usedKwh,
+        cost,
+        logAvg: Math.round(logAvg * 10) / 10
+      };
+    });
+  }, [evLogs]);
+
   // --- 4. SZEKCIÓ: API LEKÉRDEZÉSEK ---
   async function fetchMyShares(token: string) {
     try {
@@ -881,38 +914,23 @@ function MainApp() {
     });
   }, [benchmarks]);
 
-  // SPRITMONITOR SOC-KORRIGÁLT INTELLIGENS AKKU FOGYASZTÁS
   const evEfficiencyData = useMemo(() => {
-    const safeEv = Array.isArray(evLogs) ? evLogs : [];
     const map: { [month: string]: { kwh: number; km: number; cost: number } } = {};
-    safeEv.forEach(log => {
+    
+    parsedEvLogsWithEnergy.forEach(log => {
       if (!log || !log.date) return;
       const m = String(log.date).substring(0, 7);
       if (!map[m]) map[m] = { kwh: 0, km: 0, cost: 0 };
       
-      const kwh = parseFloat(log.kwh_amount || 0) || 0;
-      const km = parseInt(log.driven_km || 0) || 0;
-      const cost = parseFloat(log.cost_huf || 0) || 0;
-
-      let effectiveKwh = kwh;
-      if (log.start_soc !== null && log.end_soc !== null && log.start_soc !== '' && log.end_soc !== '') {
-        const sSoc = parseFloat(log.start_soc);
-        const eSoc = parseFloat(log.end_soc);
-        if (!isNaN(sSoc) && !isNaN(eSoc)) {
-          const socDeltaKwh = (sSoc - eSoc) * (BATTERY_CAPACITY_KWH / 100.0);
-          effectiveKwh = kwh + socDeltaKwh;
-        }
-      }
-
-      map[m].kwh += effectiveKwh;
-      map[m].km += km;
-      map[m].cost += cost;
+      map[m].kwh += log.usedKwh;
+      map[m].km += log.km;
+      map[m].cost += log.cost;
     });
 
     return Object.keys(map).sort().map(m => {
       const d = map[m];
-      const avgKwh100Km = d.km > 0 ? (d.kwh / d.km) * 100 : 0;
-      const avgFtKm = d.km > 0 ? d.cost / d.km : 0;
+      const avgKwh100Km = d.km > 0 ? (d.kwh / d.km) * 100.0 : 0.0;
+      const avgFtKm = d.km > 0 ? d.cost / d.km : 0.0;
       return {
         month: m,
         kwh100km: parseFloat(avgKwh100Km.toFixed(1)) || 0,
@@ -920,7 +938,7 @@ function MainApp() {
         totalKm: d.km
       };
     }).filter(d => d.totalKm > 0 || d.kwh100km > 0);
-  }, [evLogs]);
+  }, [parsedEvLogsWithEnergy]);
 
   const roiMetrics = useMemo(() => {
     let totalKwh = 0;
@@ -2045,49 +2063,35 @@ function MainApp() {
                     <div className="ui-widget-card scrollable-list" style={{ maxHeight: '280px' }}>
                       <h3 className="card-heading-clean">📜 Töltési Napló (Szerkeszthető)</h3>
                       <div className="modern-data-table-stack">
-                        {evLogs.map((log: any) => {
-                          const kwh = parseFloat(log.kwh_amount || 0);
-                          const km = parseInt(log.driven_km || 0);
-                          let effKwh = kwh;
-                          if (log.start_soc !== null && log.end_soc !== null && log.start_soc !== '' && log.end_soc !== '') {
-                            const sSoc = parseFloat(log.start_soc);
-                            const eSoc = parseFloat(log.end_soc);
-                            if (!isNaN(sSoc) && !isNaN(eSoc)) {
-                              effKwh = kwh + (sSoc - eSoc) * (BATTERY_CAPACITY_KWH / 100.0);
-                            }
-                          }
-                          const logAvg = km > 0 ? ((effKwh / km) * 100).toFixed(1) : '0.0';
-
-                          return (
-                            <div key={log.id} className="table-row-card" style={{ padding: '8px 12px' }}>
-                              <div>
-                                <div style={{ fontWeight: 700, fontSize: '0.85rem' }}>
-                                  {log.location} ({log.charge_source})
-                                  <span style={{ marginLeft: '8px', color: '#8b5cf6', fontSize: '0.75rem' }}>
-                                    • {logAvg} kWh/100km
-                                  </span>
-                                </div>
-                                <div style={{ fontSize: '0.75rem', color: '#64748b' }}>
-                                  {String(log.date).substring(0, 10)} 
-                                  {log.start_soc !== null && log.end_soc !== null ? ` • ${log.start_soc}% ➔ ${log.end_soc}%` : ''} 
-                                  {log.driven_km ? ` • ${log.driven_km} km` : ''}
-                                </div>
+                        {parsedEvLogsWithEnergy.map((log: any) => (
+                          <div key={log.id} className="table-row-card" style={{ padding: '8px 12px' }}>
+                            <div>
+                              <div style={{ fontWeight: 700, fontSize: '0.85rem' }}>
+                                {log.location} ({log.charge_source})
+                                <span style={{ marginLeft: '8px', color: '#8b5cf6', fontSize: '0.75rem' }}>
+                                  • {log.logAvg} kWh/100km
+                                </span>
                               </div>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                <div style={{ textAlign: 'right' }}>
-                                  <div style={{ fontWeight: 700, fontSize: '0.85rem' }} className="font-emerald">{log.kwh_amount} kWh</div>
-                                  <div style={{ fontSize: '0.75rem', color: '#64748b' }}>{parseFloat(log.cost_huf).toLocaleString()} Ft</div>
-                                </div>
-                                {!isReadOnly && (
-                                  <div className="row-buttons-trigger">
-                                    <button onClick={() => handleEditEvLog(log)}>✏️</button>
-                                    <button onClick={async () => { if(window.confirm("Biztosan törlöd a töltést?")) { await fetch(`${BACKEND_URL}/api/ev-logs/${log.id}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${user.token}` } }); fetchAll(user.token); } }}>❌</button>
-                                  </div>
-                                )}
+                              <div style={{ fontSize: '0.75rem', color: '#64748b' }}>
+                                {String(log.date).substring(0, 10)} 
+                                {log.start_soc !== null && log.end_soc !== null ? ` • ${log.start_soc}% ➔ ${log.end_soc}%` : ''} 
+                                {log.driven_km ? ` • ${log.driven_km} km` : ''}
                               </div>
                             </div>
-                          );
-                        })}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                              <div style={{ textAlign: 'right' }}>
+                                <div style={{ fontWeight: 700, fontSize: '0.85rem' }} className="font-emerald">{log.kwhCharged} kWh</div>
+                                <div style={{ fontSize: '0.75rem', color: '#64748b' }}>{parseFloat(log.cost || 0).toLocaleString()} Ft</div>
+                              </div>
+                              {!isReadOnly && (
+                                <div className="row-buttons-trigger">
+                                  <button onClick={() => handleEditEvLog(log)}>✏️</button>
+                                  <button onClick={async () => { if(window.confirm("Biztosan törlöd a töltést?")) { await fetch(`${BACKEND_URL}/api/ev-logs/${log.id}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${user.token}` } }); fetchAll(user.token); } }}>❌</button>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        ))}
                       </div>
                     </div>
                   </div>
